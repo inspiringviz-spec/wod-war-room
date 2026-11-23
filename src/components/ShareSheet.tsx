@@ -168,7 +168,7 @@ function TeamSync() {
 }
 
 export function ShareSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { state, replace, toast, teamCode, leaveTeam } = useStore()
+  const { state, replace, update, toast, teamCode, leaveTeam } = useStore()
   const file = useRef<HTMLInputElement>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -201,6 +201,17 @@ export function ShareSheet({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Sheet open={open} onClose={onClose} title="Partager le plan">
       <div className="space-y-4">
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-mute">Nom de l’équipe</span>
+          <input
+            type="text"
+            value={state.teamName}
+            maxLength={30}
+            placeholder="Affiché en haut, à côté de WOD War Room"
+            onChange={(e) => update((s) => { s.teamName = e.target.value })}
+            className={cx(INPUT, 'font-semibold')}
+          />
+        </label>
         <TeamSync />
         {!teamCode && (
           <Notice>

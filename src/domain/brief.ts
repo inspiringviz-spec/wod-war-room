@@ -53,7 +53,7 @@ export function buildBrief(state: AppState, sessionDate: string): string {
 
   out.push('CONTEXTE')
   out.push(
-    `Équipe de CrossFit de ${state.athletes.length} athlètes : ${state.athletes.map((a) => a.name).join(', ')}. Compétition par équipe le ${dayName(state.competitionDate).toLowerCase()} ${shortDate(state.competitionDate)}.`,
+    `Équipe de CrossFit${state.teamName ? ` « ${state.teamName} »` : ''} de ${state.athletes.length} athlètes : ${state.athletes.map((a) => a.name).join(', ')}. Compétition par équipe le ${dayName(state.competitionDate).toLowerCase()} ${shortDate(state.competitionDate)}.`,
   )
   out.push(
     `Nous ne ferons qu’une seule séance ensemble avant la compétition, le ${dayName(sessionDate).toLowerCase()} ${shortDate(sessionDate)} (${daysOut > 0 ? `J-${daysOut}` : 'jour J'}). Objectif : arriver frais, caler la synchro, les transitions et la répartition des rôles. Pas de recherche de volume ni de maximum.`,

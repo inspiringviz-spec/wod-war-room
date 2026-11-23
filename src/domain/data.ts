@@ -385,6 +385,7 @@ export function emptyStrategy(): StrategyState {
 export function defaultState(): AppState {
   return {
     v: 1,
+    teamName: '',
     competitionDate: COMPETITION_DATE,
     athletes: defaultAthletes(),
     sessions: defaultSessions(COMPETITION_DATE),

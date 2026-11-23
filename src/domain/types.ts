@@ -183,6 +183,8 @@ export interface RiskConfig {
 
 export interface AppState {
   v: 1
+  /** Nom de l'équipe, affiché dans l'en-tête. Vide = non renseigné. */
+  teamName: string
   competitionDate: string
   athletes: Athlete[]
   sessions: Session[]

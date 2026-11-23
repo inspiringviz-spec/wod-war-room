@@ -272,6 +272,7 @@ export function sanitizeState(raw: unknown): AppState | null {
   const competitionDate = isValidISO(raw.competitionDate) ? raw.competitionDate : base.competitionDate
   const out: AppState = {
     v: 1,
+    teamName: str(raw.teamName, 30).trim(),
     competitionDate,
     athletes: athletes.length ? athletes : base.athletes,
     sessions: sessions ?? base.sessions,

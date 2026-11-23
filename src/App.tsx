@@ -34,11 +34,23 @@ const NAV: { page: Page; label: string; short: string; icon: LucideIcon }[] = [
 const MOBILE: Page[] = ['dashboard', 'wods', 'team', 'week']
 
 function Logo() {
+  const { state } = useStore()
+  const team = state.teamName.trim()
   return (
-    <button type="button" onClick={() => go('dashboard')} className="flex items-center gap-2" aria-label="WOD War Room, retour à l'accueil">
-      <span className="grid size-8 place-items-center rounded-lg bg-lime font-display text-lg leading-none font-bold text-bg">W</span>
-      <span className="font-display text-xl leading-none font-bold tracking-[0.08em] uppercase">
-        WOD <span className="text-lime">War Room</span>
+    <button
+      type="button"
+      onClick={() => go('dashboard')}
+      className="flex min-w-0 items-center gap-2 text-left"
+      aria-label={`WOD War Room${team ? `, équipe ${team}` : ''}, retour à l'accueil`}
+    >
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-lime font-display text-lg leading-none font-bold text-bg">W</span>
+      <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-display text-xl leading-none font-bold tracking-[0.08em] whitespace-nowrap uppercase">
+          WOD <span className="text-lime">War Room</span>
+        </span>
+        {team && (
+          <span className="max-w-full truncate border-l border-line pl-2 font-display text-base leading-none font-semibold tracking-[0.08em] text-mute uppercase">{team}</span>
+        )}
       </span>
     </button>
   )
@@ -340,7 +352,7 @@ export default function App() {
       {/* En-tête (mobile) */}
       <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-bg/90 px-4 backdrop-blur lg:hidden">
         <Logo />
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2 pl-2">
           <span className="rounded-full border border-lime/30 bg-lime/10 px-2.5 py-1 font-display text-base leading-none font-bold text-lime uppercase">{countdown}</span>
           <button
             type="button"

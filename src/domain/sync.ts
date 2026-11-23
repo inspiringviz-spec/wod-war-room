@@ -23,7 +23,7 @@ export function sectionsOf(state: AppState): Record<string, unknown> {
   for (const a of state.athletes) out[`athlete:${a.id}`] = a
   out.session = state.sessions
   out.strategy = { strategies: state.strategies, rules: state.rules, splitRules: state.splitRules }
-  out.settings = { competitionDate: state.competitionDate, config: state.config }
+  out.settings = { teamName: state.teamName, competitionDate: state.competitionDate, config: state.config }
   return out
 }
 
@@ -122,6 +122,7 @@ export function mergeDoc(local: AppState, stamps: Stamps, remote: SyncDoc | null
   }
   const settings = take('settings')
   if (isObj(settings)) {
+    raw.teamName = settings.teamName
     raw.competitionDate = settings.competitionDate
     raw.config = settings.config
   }

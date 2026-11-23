@@ -735,6 +735,16 @@ describe('synchronisation d’équipe', () => {
     expect(res.state.athletes[0].rm).toEqual({})
   })
 
+  it('le nom de l’équipe se synchronise et reste borné', () => {
+    const named = defaultState()
+    named.teamName = 'Les Guerriers'
+    const res = mergeDoc(defaultState(), {}, toDoc(named, { settings: 3000 }))
+    expect(res.state.teamName).toBe('Les Guerriers')
+    expect(sanitizeState({ teamName: `  ${'x'.repeat(80)}` })!.teamName).toHaveLength(28)
+    expect(sanitizeState({ teamName: 42 })!.teamName).toBe('')
+    expect(defaultState().teamName).toBe('')
+  })
+
   it('codes d’équipe', () => {
     const code = newTeamCode((n) => Array.from({ length: n }, (_, i) => i * 7))
     expect(code).toMatch(/^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/)
