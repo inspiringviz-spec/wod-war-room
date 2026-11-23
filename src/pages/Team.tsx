@@ -1,11 +1,15 @@
-import { Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, Plus, Send, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { shortDate, uid } from '../domain/calc'
 import { COMPETENCY_MOVEMENTS, movement, RM_KEYS, RM_LABEL, UNBROKEN_MOVEMENTS } from '../domain/movements'
+import { athleteLink } from '../domain/share'
 import { COMPETENCIES, COMPETENCY_LABEL, COMPETENCY_SHORT, competencyOf, unknownShare } from '../domain/strategy'
 import type { Athlete, Competency } from '../domain/types'
 import { useStore } from '../state/store'
-import { Button, Card, cx, Eyebrow, Field, INPUT, Meter, OptionalNumber, PageHeader, Segmented, Stepper, TextInput } from '../ui/kit'
+import { Button, Card, cx, Eyebrow, Field, H2, INPUT, Meter, OptionalNumber, PageHeader, Segmented, Stepper, TextInput } from '../ui/kit'
+import { shareLink } from '../components/ShareSheet'
+
+const ME_KEY = 'wod-war-room:me'
 
 const CELL: Record<Competency, string> = {
   comfortable: 'bg-lime text-bg border-lime',
@@ -16,8 +20,9 @@ const CELL: Record<Competency, string> = {
 }
 
 const CYCLE: Competency[] = ['unknown', 'comfortable', 'manageable', 'difficult', 'not_yet']
+const RATED: Competency[] = ['comfortable', 'manageable', 'difficult', 'not_yet']
 
-export function nextCompetency(c: Competency): Competency {
+function nextCompetency(c: Competency): Competency {
   return CYCLE[(CYCLE.indexOf(c) + 1) % CYCLE.length]
 }
 
@@ -62,11 +67,7 @@ export function CompetencyMatrix({ movementIds, compact }: { movementIds: string
                         type="button"
                         onClick={() => set(a.id, id, nextCompetency(c))}
                         aria-label={`${mv.name}, ${a.name} : ${COMPETENCY_LABEL[c]}. Toucher pour changer`}
-                        className={cx(
-                          'w-full rounded-lg border px-0.5 text-[11px] leading-none font-semibold transition active:scale-95',
-                          compact ? 'h-9' : 'h-10',
-                          CELL[c],
-                        )}
+                        className={cx('w-full rounded-lg border px-0.5 text-[11px] leading-none font-semibold transition active:scale-95', compact ? 'h-9' : 'h-10', CELL[c])}
                       >
                         {COMPETENCY_SHORT[c]}
                       </button>
@@ -90,13 +91,100 @@ export function CompetencyMatrix({ movementIds, compact }: { movementIds: string
   )
 }
 
-function Profile({ athlete }: { athlete: Athlete }) {
-  const { state, update, today } = useStore()
-  const patch = (fn: (a: Athlete) => void) =>
+function usePatch(athleteId: string) {
+  const { update } = useStore()
+  return (fn: (a: Athlete) => void) =>
     update((s) => {
-      const a = s.athletes.find((x) => x.id === athlete.id)
+      const a = s.athletes.find((x) => x.id === athleteId)
       if (a) fn(a)
     })
+}
+
+/** L'avis d'un athlète : son niveau par mouvement, en un geste par ligne. */
+function SelfAssessment({ athlete }: { athlete: Athlete }) {
+  const { toast } = useStore()
+  const patch = usePatch(athlete.id)
+  const rated = COMPETENCY_MOVEMENTS.filter((id) => competencyOf(athlete, id) !== 'unknown').length
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Eyebrow>L’avis de {athlete.name}</Eyebrow>
+          <p className="mt-1 text-[13px] leading-snug text-mute">Pour chaque mouvement des WODs de l’an dernier, où en es-tu aujourd’hui ? Touche à nouveau pour effacer.</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="tabular font-display text-3xl leading-none font-bold">
+            {rated}
+            <span className="text-lg text-dim">/{COMPETENCY_MOVEMENTS.length}</span>
+          </p>
+        </div>
+      </div>
+      <Meter className="mt-3" value={rated} max={COMPETENCY_MOVEMENTS.length} level="green" />
+
+      <ul className="mt-3 divide-y divide-line/60">
+        {COMPETENCY_MOVEMENTS.map((id) => {
+          const mv = movement(id)
+          const current = competencyOf(athlete, id)
+          return (
+            <li key={id} className="py-2.5">
+              <p className="mb-1.5 text-sm font-semibold">{mv.name}</p>
+              <div role="radiogroup" aria-label={`Niveau de ${athlete.name} sur ${mv.name}`} className="grid grid-cols-4 gap-1">
+                {RATED.map((c) => {
+                  const on = current === c
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => patch((a) => { if (on) delete a.competency[id]; else a.competency[id] = c })}
+                      className={cx('h-10 rounded-lg border px-0.5 text-[11px] leading-none font-semibold transition active:scale-95', on ? CELL[c] : 'border-line bg-bg text-mute')}
+                    >
+                      {COMPETENCY_SHORT[c]}
+                    </button>
+                  )
+                })}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+
+      <div className="mt-2 space-y-3 border-t border-line pt-4">
+        <Field label="Je me sens à l’aise sur…">
+          <textarea aria-label="Je me sens à l'aise sur" value={athlete.strengths} maxLength={300} rows={2} placeholder="Ex. burpees, vélo, tenir un rythme régulier" onChange={(e) => patch((a) => { a.strengths = e.target.value })} className={cx(INPUT, 'h-auto resize-none py-2.5 leading-snug')} />
+        </Field>
+        <Field label="Je bloque sur…">
+          <textarea aria-label="Je bloque sur" value={athlete.blockers} maxLength={300} rows={2} placeholder="Ex. muscle-ups, charges lourdes au-dessus de la tête, grip" onChange={(e) => patch((a) => { a.blockers = e.target.value })} className={cx(INPUT, 'h-auto resize-none py-2.5 leading-snug')} />
+        </Field>
+        <Field label="Douleur ou gêne en ce moment" hint="Laisse vide s’il n’y a rien.">
+          <TextInput label="Douleur ou gêne" value={athlete.recovery.pain} maxLength={160} placeholder="Ex. épaule droite" onChange={(v) => patch((a) => { a.recovery.pain = v })} />
+        </Field>
+      </div>
+
+      <Button
+        variant="primary"
+        size="lg"
+        className="mt-4 w-full"
+        onClick={async () => {
+          const r = await shareLink(`WOD War Room · avis de ${athlete.name}`, athleteLink(athlete))
+          toast(r === 'copied' ? 'Lien de ton avis copié : envoie-le à l’équipe' : r === 'shared' ? 'Avis partagé' : 'Copie impossible')
+        }}
+      >
+        <Send size={18} aria-hidden />
+        Envoyer mon avis
+      </Button>
+      <p className="mt-2 text-[11px] leading-snug text-dim">
+        Le lien ne contient que la fiche de {athlete.name}. La personne qui prépare la séance l’ouvre, l’avis s’ajoute à son plan, puis elle génère la séance.
+      </p>
+    </Card>
+  )
+}
+
+function Details({ athlete }: { athlete: Athlete }) {
+  const { state, today } = useStore()
+  const patch = usePatch(athlete.id)
   const [test, setTest] = useState({ movementId: 't2b', result: '', note: '', partnerId: '' })
   const others = state.athletes.filter((a) => a.id !== athlete.id)
 
@@ -129,35 +217,22 @@ function Profile({ athlete }: { athlete: Athlete }) {
           <Field label="Conditionnement" className="col-span-2">
             <TextInput label="Conditionnement" value={athlete.conditioning} placeholder="Repères cardio (5 km, 2 km rameur…)" maxLength={160} onChange={(v) => patch((a) => { a.conditioning = v })} />
           </Field>
-          <Field label="Arrêt récent" hint="À partir de 2 semaines, le Fatigue Guard devient plus prudent." className="col-span-2">
-            <Stepper label="semaines d'arrêt" value={athlete.breakWeeks} min={0} max={52} suffix="sem." onChange={(v) => patch((a) => { a.breakWeeks = v })} />
+          <Field label="Semaines sans entraînement complet" hint="À partir de 2, l’application propose des volumes un peu plus prudents." className="col-span-2">
+            <Stepper label="semaines sans entraînement complet" value={athlete.breakWeeks} min={0} max={52} suffix="sem." onChange={(v) => patch((a) => { a.breakWeeks = v })} />
           </Field>
           <Field label="Notes" className="col-span-2">
-            <textarea
-              aria-label="Notes"
-              value={athlete.notes}
-              maxLength={400}
-              rows={2}
-              placeholder="Points forts, appréhensions, mouvements à éviter…"
-              onChange={(e) => patch((a) => { a.notes = e.target.value })}
-              className={cx(INPUT, 'h-auto resize-none py-2.5 leading-snug')}
-            />
+            <textarea aria-label="Notes" value={athlete.notes} maxLength={400} rows={2} placeholder="Contexte, préférences…" onChange={(e) => patch((a) => { a.notes = e.target.value })} className={cx(INPUT, 'h-auto resize-none py-2.5 leading-snug')} />
           </Field>
         </div>
       </Card>
 
       <Card>
         <Eyebrow>Force · 1RM en kg</Eyebrow>
-        <p className="mt-1 text-xs leading-snug text-dim">Laissez vide si inconnu. Ne testez pas de maximum cette semaine.</p>
+        <p className="mt-1 text-xs leading-snug text-dim">Laisse vide si inconnu. Pas de test de maximum cette semaine.</p>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {RM_KEYS.map((k) => (
             <Field key={k} label={RM_LABEL[k]}>
-              <OptionalNumber
-                label={`1RM ${RM_LABEL[k]}`}
-                value={athlete.rm[k]}
-                suffix="kg"
-                onChange={(v) => patch((a) => { if (v && v > 0) a.rm[k] = v; else delete a.rm[k] })}
-              />
+              <OptionalNumber label={`1RM ${RM_LABEL[k]}`} value={athlete.rm[k]} suffix="kg" onChange={(v) => patch((a) => { if (v && v > 0) a.rm[k] = v; else delete a.rm[k] })} />
             </Field>
           ))}
         </div>
@@ -183,7 +258,7 @@ function Profile({ athlete }: { athlete: Athlete }) {
       <Card>
         <Eyebrow>Tests enregistrés</Eyebrow>
         {athlete.tests.length === 0 ? (
-          <p className="mt-2 text-[13px] text-dim">Aucun test pour l’instant. Notez ici un essai synchro ou un chrono d’entraînement.</p>
+          <p className="mt-2 text-[13px] text-dim">Aucun test pour l’instant. Note ici un essai synchro ou un chrono de la séance.</p>
         ) : (
           <ul className="mt-2 divide-y divide-line/70">
             {athlete.tests.map((t) => (
@@ -198,12 +273,7 @@ function Profile({ athlete }: { athlete: Athlete }) {
                     {t.note ? ` · ${t.note}` : ''}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  aria-label={`Supprimer le test ${movement(t.movementId).name}`}
-                  onClick={() => patch((a) => { a.tests = a.tests.filter((x) => x.id !== t.id) })}
-                  className="grid size-8 shrink-0 place-items-center rounded-lg text-mute hover:bg-red/15 hover:text-red"
-                >
+                <button type="button" aria-label={`Supprimer le test ${movement(t.movementId).name}`} onClick={() => patch((a) => { a.tests = a.tests.filter((x) => x.id !== t.id) })} className="grid size-8 shrink-0 place-items-center rounded-lg text-mute hover:bg-red/15 hover:text-red">
                   <Trash2 size={15} aria-hidden />
                 </button>
               </li>
@@ -216,14 +286,7 @@ function Profile({ athlete }: { athlete: Athlete }) {
             e.preventDefault()
             if (!test.result.trim()) return
             patch((a) => {
-              a.tests.unshift({
-                id: uid(),
-                date: today,
-                movementId: test.movementId,
-                result: test.result.trim(),
-                note: test.note.trim(),
-                partnerId: test.partnerId || undefined,
-              })
+              a.tests.unshift({ id: uid(), date: today, movementId: test.movementId, result: test.result.trim(), note: test.note.trim(), partnerId: test.partnerId || undefined })
             })
             setTest({ ...test, result: '', note: '' })
           }}
@@ -257,19 +320,55 @@ function Profile({ athlete }: { athlete: Athlete }) {
 
 export function Team() {
   const { state } = useStore()
-  const [current, setCurrent] = useState(state.athletes[0]?.id ?? '')
-  const athlete = state.athletes.find((a) => a.id === current) ?? state.athletes[0]
+  const [me, setMeState] = useState(() => {
+    try {
+      return window.localStorage.getItem(ME_KEY) ?? ''
+    } catch {
+      return ''
+    }
+  })
+  const [details, setDetails] = useState(false)
+  const athlete = state.athletes.find((a) => a.id === me) ?? state.athletes[0]
   const known = 1 - unknownShare(state.athletes, COMPETENCY_MOVEMENTS)
+  const setMe = (id: string) => {
+    setMeState(id)
+    try {
+      window.localStorage.setItem(ME_KEY, id)
+    } catch {
+      // choix non mémorisé : sans conséquence
+    }
+  }
 
   return (
     <div>
-      <PageHeader eyebrow="Profils et évaluation" title="Équipe" />
+      <PageHeader eyebrow="Deux minutes chacun" title="Mon avis" />
 
       <Card className="mb-4">
+        <H2>Qui es-tu ?</H2>
+        <p className="mt-1 mb-3 text-[13px] leading-snug text-mute">Chacun remplit sa fiche sur son téléphone, puis l’envoie. Plus les avis sont complets, plus la séance générée est juste.</p>
+        <Segmented label="Qui es-tu ?" value={athlete?.id ?? ''} options={state.athletes.map((a) => ({ value: a.id, label: a.name }))} onChange={setMe} />
+      </Card>
+
+      {athlete && <SelfAssessment key={athlete.id} athlete={athlete} />}
+
+      <button type="button" onClick={() => setDetails((d) => !d)} aria-expanded={details} className="mt-4 flex w-full items-center justify-between rounded-2xl border border-line bg-panel px-4 py-3.5 text-left">
+        <span>
+          <span className="block text-sm font-semibold">Fiche détaillée de {athlete?.name}</span>
+          <span className="block text-xs text-mute">Identité, 1RM, max enchaînés, tests (facultatif)</span>
+        </span>
+        <ChevronDown size={18} aria-hidden className={cx('shrink-0 text-dim transition', details && 'rotate-180')} />
+      </button>
+      {details && athlete && (
+        <div className="mt-4 animate-fade">
+          <Details key={athlete.id} athlete={athlete} />
+        </div>
+      )}
+
+      <Card className="mt-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <Eyebrow>Matrice de compétence</Eyebrow>
-            <p className="mt-1 text-[13px] leading-snug text-mute">Touchez une case pour faire défiler les niveaux. Rien n’est supposé : une case non évaluée reste « ? ».</p>
+            <Eyebrow>Vue d’équipe</Eyebrow>
+            <p className="mt-1 text-[13px] leading-snug text-mute">Les trois avis côte à côte. Une case non évaluée reste « ? » : rien n’est supposé.</p>
           </div>
           <div className="shrink-0 text-right">
             <p className="tabular font-display text-3xl leading-none font-bold">{Math.round(known * 100)} %</p>
@@ -279,15 +378,6 @@ export function Team() {
         <Meter className="mt-3 mb-4" value={known} max={1} level="green" />
         <CompetencyMatrix movementIds={COMPETENCY_MOVEMENTS} />
       </Card>
-
-      <Segmented
-        label="Choisir un athlète"
-        value={athlete?.id ?? ''}
-        options={state.athletes.map((a) => ({ value: a.id, label: a.name }))}
-        onChange={setCurrent}
-        className="mb-4"
-      />
-      {athlete && <Profile key={athlete.id} athlete={athlete} />}
     </div>
   )
 }

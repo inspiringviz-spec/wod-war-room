@@ -1,6 +1,6 @@
 import { CalendarPlus, Dices, LayoutTemplate, Play, Save, Share2, Wand2 } from 'lucide-react'
 import { useState } from 'react'
-import { dayName, daysBetween, instantiate, movementTotals, uid, weekDays } from '../domain/calc'
+import { dayName, daysBetween, instantiate, movementTotals, uid } from '../domain/calc'
 import { OBJECTIVE_LABEL, OBJECTIVES, TEMPLATES } from '../domain/data'
 import { generateWod } from '../domain/generator'
 import type { Intensity } from '../domain/generator'
@@ -8,7 +8,7 @@ import { ALL_EQUIPMENT, EQUIPMENT_LABEL } from '../domain/movements'
 import { assessSession } from '../domain/risk'
 import { wodLink } from '../domain/share'
 import type { Equipment, Objective, Wod } from '../domain/types'
-import { go, useStore } from '../state/store'
+import { go, useSessionDate, useStore } from '../state/store'
 import { Button, Card, cx, Eyebrow, Field, INPUT, LEVEL_BG, LEVEL_LABEL, LEVEL_TEXT, PageHeader, Segmented, Stepper } from '../ui/kit'
 import { RiskPanel } from '../components/RiskPanel'
 import { shareLink } from '../components/ShareSheet'
@@ -139,8 +139,8 @@ export function Builder() {
   const { state, update, ctxFor, toast, today } = useStore()
   const [tab, setTab] = useState<'templates' | 'generator'>('templates')
   const wod = state.draft
-  const days = weekDays(state.competitionDate)
-  const date = days.includes(state.draftDate) ? state.draftDate : days.includes(today) ? today : days[0]
+  const date = useSessionDate()
+  const out = daysBetween(date, state.competitionDate)
   const assessment = assessSession(wod, ctxFor(date))
   const editing = state.sessions.find((s) => s.id === state.draftSessionId)
 
@@ -258,14 +258,14 @@ export function Builder() {
 
           <Card>
             <div className="mb-3 flex items-center justify-between gap-2">
-              <Eyebrow>{editing ? `Modification · ${dayName(editing.date)}` : 'Votre mini-WOD'}</Eyebrow>
+              <Eyebrow>{editing ? 'Modification d’une partie de la séance' : 'Votre mini-WOD'}</Eyebrow>
               {editing && (
                 <button
                   type="button"
                   className="text-xs text-mute underline-offset-2 hover:text-ink hover:underline"
                   onClick={() => update((s) => { s.draftSessionId = undefined })}
                 >
-                  Détacher du planning
+                  Détacher de la séance
                 </button>
               )}
             </div>
@@ -275,24 +275,12 @@ export function Builder() {
 
         <div className="min-w-0 space-y-4 lg:sticky lg:top-20">
           <Card>
-            <Field label="Jour d’entraînement" hint="Le même WOD pèse plus lourd à l’approche de la compétition.">
-              <select
-                aria-label="Jour d'entraînement"
-                value={date}
-                onChange={(e) => update((s) => { s.draftDate = e.target.value })}
-                className={INPUT}
-              >
-                {days.map((d) => {
-                  const out = daysBetween(d, state.competitionDate)
-                  return (
-                    <option key={d} value={d}>
-                      {dayName(d)} · {out === 0 ? 'jour J' : `J-${out}`}
-                      {d === today ? ' (aujourd’hui)' : ''}
-                    </option>
-                  )
-                })}
-              </select>
-            </Field>
+            <Eyebrow>Évalué pour la séance</Eyebrow>
+            <p className="mt-1.5 text-sm font-semibold">
+              {dayName(date)} · {out === 0 ? 'jour J' : `J-${out}`}
+              {date === today ? ' (aujourd’hui)' : ''}
+            </p>
+            <p className="mt-1 text-[11px] leading-snug text-dim">Le même WOD pèse plus lourd à l’approche de la compétition. Le jour se change dans « Séance ».</p>
           </Card>
 
           <RiskPanel id="risk" wod={wod} date={date} onChange={setDraft} />
@@ -305,12 +293,12 @@ export function Builder() {
                   className="w-full"
                   onClick={() => {
                     saveExisting()
-                    toast('Séance mise à jour')
+                    toast('Partie mise à jour')
                     go('week')
                   }}
                 >
                   <Save size={16} aria-hidden />
-                  Mettre à jour la séance de {dayName(date).toLowerCase()}
+                  Mettre à jour cette partie
                 </Button>
                 <Button
                   className="w-full"
@@ -331,12 +319,12 @@ export function Builder() {
                   disabled={wod.items.length === 0}
                   onClick={() => {
                     saveNew()
-                    toast(`Ajouté à ${dayName(date).toLowerCase()}`)
+                    toast('Ajouté à la séance')
                     go('week')
                   }}
                 >
                   <CalendarPlus size={16} aria-hidden />
-                  Ajouter à {dayName(date).toLowerCase()}
+                  Ajouter à la séance
                 </Button>
                 <Button
                   className="w-full"
@@ -344,7 +332,7 @@ export function Builder() {
                   onClick={() => go('live', saveNew())}
                 >
                   <Play size={16} aria-hidden />
-                  Ajouter et lancer la séance
+                  Ajouter et lancer
                 </Button>
               </>
             )}

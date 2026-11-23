@@ -125,6 +125,8 @@ export function sanitizeAthlete(raw: unknown, index: number): Athlete | null {
   base.conditioning = str(raw.conditioning, 160)
   base.breakWeeks = n(raw.breakWeeks, 0, 104, 0)
   base.notes = str(raw.notes, 400)
+  base.strengths = str(raw.strengths, 300)
+  base.blockers = str(raw.blockers, 300)
   if (isObj(raw.rm)) {
     for (const key of RM_KEYS) {
       const v = n(raw.rm[key], 0, 1000, 0)
@@ -205,9 +207,12 @@ function sanitizeConfig(raw: unknown): RiskConfig {
   }
   const amber = n(raw.amber, 10, 1000, d.amber)
   const weekAmber = n(raw.weekAmber, 20, 5000, d.weekAmber)
+  const dayAmber = n(raw.dayAmber, 20, 3000, d.dayAmber)
   return {
     amber,
     red: Math.max(amber + 1, n(raw.red, 10, 2000, d.red)),
+    dayAmber,
+    dayRed: Math.max(dayAmber + 1, n(raw.dayRed, 30, 6000, d.dayRed)),
     weekAmber,
     weekRed: Math.max(weekAmber + 1, n(raw.weekRed, 20, 10000, d.weekRed)),
     proximity,
@@ -314,6 +319,43 @@ export function decodeWod(data: string): Wod | null {
   return sanitizeWod(decodePayload(data))
 }
 
+// --- Avis d'un athlète : son profil seul, à envoyer au capitaine ---
+
+export function encodeAthlete(athlete: Athlete): string {
+  return encodePayload(athlete)
+}
+
+export function decodeAthlete(data: string): Athlete | null {
+  return sanitizeAthlete(decodePayload(data), 0)
+}
+
+/** Intègre l'avis reçu dans l'équipe : même identifiant, sinon même prénom. */
+export function mergeAthlete(athletes: Athlete[], incoming: Athlete): Athlete[] | null {
+  let index = athletes.findIndex((a) => a.id === incoming.id)
+  if (index === -1) index = athletes.findIndex((a) => a.name.trim().toLowerCase() === incoming.name.trim().toLowerCase())
+  if (index === -1) return null
+  return athletes.map((a, i) => (i === index ? { ...incoming, id: a.id } : a))
+}
+
+// --- Proposition de séance : les parties seules, sans les profils ---
+
+export interface SessionProposal {
+  date: string
+  parts: Wod[]
+}
+
+export function encodeProposal(p: SessionProposal): string {
+  return encodePayload(p)
+}
+
+export function decodeProposal(data: string): SessionProposal | null {
+  const raw = decodePayload(data)
+  if (!isObj(raw) || !isValidISO(raw.date) || !Array.isArray(raw.parts)) return null
+  const parts = raw.parts.slice(0, 8).map(sanitizeWod).filter((x): x is Wod => x !== null)
+  if (!parts.length) return null
+  return { date: raw.date, parts }
+}
+
 export function parseJSONState(text: string): AppState | null {
   try {
     return sanitizeState(JSON.parse(text))
@@ -328,6 +370,14 @@ export function baseUrl(): string {
 
 export function planLink(state: AppState): string {
   return `${baseUrl()}#/import/${encodeState(state)}`
+}
+
+export function athleteLink(athlete: Athlete): string {
+  return `${baseUrl()}#/avis/${encodeAthlete(athlete)}`
+}
+
+export function proposalLink(p: SessionProposal): string {
+  return `${baseUrl()}#/seance/${encodeProposal(p)}`
 }
 
 export function wodLink(wod: Wod): string {

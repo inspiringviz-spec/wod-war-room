@@ -26,7 +26,7 @@ export function Wods({ initial }: { initial?: string }) {
 
   return (
     <div>
-      <PageHeader eyebrow="Édition précédente" title="WODs de référence" />
+      <PageHeader eyebrow="Édition précédente" title="WODs de l’an dernier" />
 
       <Notice className="mb-4">
         <span className="flex items-start gap-2">
@@ -73,7 +73,11 @@ export function Wods({ initial }: { initial?: string }) {
               Créer un mini-WOD inspiré ({tpl.tag})
             </Button>
           )}
-          <Button className="mt-2 w-full" onClick={() => go('strategy', h.id)}>
+          <Button className="mt-2 w-full" onClick={() => go('week')}>
+            Générer la séance d’équipe en 3 parties
+            <ChevronRight size={16} aria-hidden />
+          </Button>
+          <Button variant="ghost" className="mt-1 w-full" onClick={() => go('strategy', h.id)}>
             Préparer la stratégie d’équipe
             <ChevronRight size={16} aria-hidden />
           </Button>
@@ -117,7 +121,7 @@ export function Wods({ initial }: { initial?: string }) {
               ))}
             </ul>
             <Button size="sm" className="mt-3" onClick={() => go('team')}>
-              Compléter les profils
+              Donner son avis
               <ChevronRight size={14} aria-hidden />
             </Button>
           </Card>

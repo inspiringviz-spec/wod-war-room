@@ -100,7 +100,7 @@ function Picker() {
 }
 
 function Runner({ session }: { session: Session }) {
-  const { update, ctxFor, toast } = useStore()
+  const { state, update, ctxFor, toast } = useStore()
   const wod = session.wod
   const assessment = useMemo(() => assessSession(wod, ctxFor(session.date)), [wod, ctxFor, session.date])
   const capMs = num(wod.capMin) * 60_000
@@ -246,8 +246,14 @@ function Runner({ session }: { session: Session }) {
       target.result = result.trim() || undefined
       target.debrief = note.trim() || undefined
     })
-    toast('Séance enregistrée')
-    go('week')
+    const next = state.sessions.find((x) => x.date === session.date && x.id !== session.id && !x.done)
+    if (next) {
+      toast('Partie enregistrée : récupérez avant la suivante')
+      go('live', next.id)
+    } else {
+      toast('Séance enregistrée')
+      go('week')
+    }
   }
 
   const movementIds = [...new Set(wod.items.map((i) => i.movementId))].filter((id) => movement(id).group !== 'recovery' && id !== 'sync_drill')
@@ -258,7 +264,7 @@ function Runner({ session }: { session: Session }) {
       <div>
         <button type="button" onClick={() => go('week')} className="mb-3 flex items-center gap-1.5 text-sm text-mute hover:text-ink">
           <ArrowLeft size={16} aria-hidden />
-          Semaine
+          Séance
         </button>
         <Card className="grid-bg">
           <div className="flex items-start justify-between gap-3">
@@ -431,6 +437,7 @@ function Runner({ session }: { session: Session }) {
 
   // Débrief
   const harder = rpe >= wod.rpe + 1.5
+  const remaining = state.sessions.filter((x) => x.date === session.date && x.id !== session.id && !x.done).length
   return (
     <div>
       <PageHeader eyebrow={`Débrief · ${wod.name}`} title={capped ? 'Time cap' : fmt(finalMs)} />
@@ -478,7 +485,7 @@ function Runner({ session }: { session: Session }) {
       <div className="sticky bottom-20 z-10 mt-4 flex gap-2 lg:bottom-4">
         <Button variant="primary" size="lg" className="flex-1 shadow-[0_8px_30px_rgba(0,0,0,0.6)]" onClick={save}>
           <Check size={18} aria-hidden />
-          Enregistrer la séance
+          {remaining > 0 ? 'Enregistrer et passer à la suite' : 'Enregistrer la séance'}
         </Button>
         <Button size="lg" onClick={reset} className="shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
           Refaire

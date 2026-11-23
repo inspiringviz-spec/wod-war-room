@@ -15,9 +15,11 @@ import {
 import { COMPETITION_DATE, defaultAthletes, defaultSessions, defaultState, HISTORICAL, TEMPLATES, template } from './data'
 import { generateWod } from './generator'
 import { ALL_EQUIPMENT } from './movements'
-import { assessSession, assessWeek, DEFAULT_CONFIG, readiness, saferAlternative } from './risk'
+import { assessSession, assessWeek, DEFAULT_CONFIG, lightenDay, readiness, saferAlternative } from './risk'
 import type { RiskContext } from './risk'
-import { decodeState, decodeWod, encodeState, encodeWod, parseJSONState, sanitizeState, sanitizeWod } from './share'
+import { buildBrief } from './brief'
+import { decodeAthlete, decodeProposal, decodeState, decodeWod, encodeAthlete, encodeProposal, encodeState, encodeWod, mergeAthlete, parseJSONState, sanitizeState, sanitizeWod } from './share'
+import { generateTeamSession } from './teamSession'
 import { bottlenecks, distribution, pairInsights } from './strategy'
 import type { Wod } from './types'
 
@@ -80,7 +82,7 @@ describe('calculs de WOD', () => {
     const lunge = h3.items.find((i) => i.movementId === 'oh_lunge')!
     const rl = relativeLoad(lunge, athletes)
     expect(rl.rel).toBeCloseTo(0.8)
-    expect(rl.who).toBe('Athlète 1')
+    expect(rl.who).toBe('Anas')
     expect(rl.missing).toBe(true) // 1RM des deux athlètes féminines non renseigné
 
     const squat = h3.items.find((i) => i.movementId === 'back_squat')!
@@ -148,7 +150,7 @@ describe('Fatigue Guard : calibration', () => {
     for (let i = 1; i < scores.length; i++) expect(scores[i]).toBeGreaterThan(scores[i - 1])
   })
 
-  it('la pause de trois semaines majore le score', () => {
+  it('l’arrêt récent majore le score', () => {
     const rested = athletes.map((a) => ({ ...a, breakWeeks: 0 }))
     const withBreak = assessSession(tpl('tpl-a'), ctx(5)).score
     const without = assessSession(tpl('tpl-a'), { ...ctx(5), athletes: rested }).score
@@ -311,9 +313,14 @@ describe('semaine', () => {
     }
   })
 
-  it('plusieurs séances le même jour : alerte', () => {
-    const sessions = [...base(), { id: 'x', date: '2026-11-23', wod: tpl('tpl-b'), done: false }]
-    expect(week(sessions).days[0].warnings.some((w) => w.id.startsWith('multi-'))).toBe(true)
+  it('parties cumulées trop lourdes : alerte sur la séance complète', () => {
+    const sessions = [...base(), { id: 'x', date: '2026-11-23', wod: tpl('tpl-b'), done: false }, { id: 'y', date: '2026-11-23', wod: tpl('tpl-a'), done: false }]
+    const day = week(sessions).days[0]
+    expect(day.warnings.some((w) => w.id.startsWith('day-total-'))).toBe(true)
+    expect(day.level).not.toBe('green')
+    const lighter = lightenDay(sessions.map((s) => s.wod), ctx(5))
+    const total = lighter.reduce((s, w) => s + assessSession(w, ctx(5)).score, 0)
+    expect(total).toBeLessThan(DEFAULT_CONFIG.dayAmber)
   })
 
   it('compenser la pause par du volume : charge hebdomadaire signalée', () => {
@@ -391,7 +398,7 @@ describe('stratégie', () => {
     const known = athletes.map((a, i) => ({ ...a, competency: { ...a.competency, t2b: i === 2 ? ('difficult' as const) : ('comfortable' as const) } }))
     const list = pairInsights(known, 't2b')
     expect(list[0].status).toBe('declared')
-    expect(list[1].fact).toContain('Athlète 3 donnera le rythme')
+    expect(list[1].fact).toContain('Natalia donnera le rythme')
   })
 
   it('répartition : synchro = tout pour chacun, partage égal tant que la règle est inconnue', () => {
@@ -497,5 +504,122 @@ describe('alternative plus sûre : sobriété', () => {
     const res = saferAlternative(more, ctx(5))
     expect(res.after.level).toBe('green')
     expect(res.changes).toEqual(['Burpee Box Jump : 13 → 8'])
+  })
+})
+
+describe('séance d’équipe en 3 parties', () => {
+  const gen = (over: Partial<Parameters<typeof generateTeamSession>[0]> = {}) =>
+    generateTeamSession({ athletes, daysOut: 4, config: DEFAULT_CONFIG, minutes: 45, intensity: 'moderate', equipment: ALL_EQUIPMENT, ...over })
+  const total = (parts: Wod[], d: number, team = athletes) => parts.reduce((s, w) => s + assessSession(w, { ...ctx(d), athletes: team }).score, 0)
+
+  it('trois parties, une par WOD de référence', () => {
+    const { parts, reasons, restMin } = gen()
+    expect(parts.map((p) => p.name)).toEqual(['Partie 1 · Gym & synchro', 'Partie 2 · Ski & sandbag', 'Partie 3 · Final allégé'])
+    expect(parts.map((p) => p.note!.slice(0, 16))).toEqual(['Inspiré du WOD 1', 'Inspiré du WOD 2', 'Inspiré du WOD F'])
+    expect(restMin).toBe(5)
+    expect(reasons.length).toBeGreaterThan(2)
+    for (const p of parts) expect(sanitizeWod(p)).not.toBeNull()
+  })
+
+  it('reste verte quel que soit le jour choisi, partie par partie et au total', () => {
+    for (const d of [5, 4, 3, 2, 1]) {
+      const { parts } = gen({ daysOut: d, intensity: d <= 2 ? 'light' : 'moderate' })
+      expect(total(parts, d)).toBeLessThan(DEFAULT_CONFIG.dayAmber)
+      for (const p of parts) expect(`J-${d} ${p.name} ${assessSession(p, ctx(d)).scoreLevel}`).toBe(`J-${d} ${p.name} green`)
+    }
+  })
+
+  it('ring muscle-ups non acquis : remplacés par un drill, avec l’explication', () => {
+    const { parts, reasons } = gen()
+    const ids = parts[2].items.map((i) => i.movementId)
+    expect(ids).toContain('rmu_drill')
+    expect(ids).not.toContain('rmu')
+    expect(reasons.some((r) => r.includes('Ring Muscle-Up remplacé') && r.includes('Anas') && r.includes('Rebecca et Natalia'))).toBe(true)
+  })
+
+  it('ring muscle-ups gardés si une athlète les déclare acquis', () => {
+    const team = athletes.map((a) => (a.id === 'a2' ? { ...a, competency: { ...a.competency, rmu: 'comfortable' as const } } : a))
+    const { parts } = gen({ athletes: team })
+    const rmu = parts[2].items.find((i) => i.movementId === 'rmu')!
+    expect(rmu.note).toContain('Sans Anas')
+    expect(rmu.note).toContain('À l’aise : Rebecca')
+  })
+
+  it('binômes synchro tournants pour tester les trois paires', () => {
+    const { parts } = gen()
+    const t2b = parts[0].items.find((i) => i.movementId === 't2b')!
+    expect(t2b.sync).toBe(true)
+    expect(t2b.note).toBe('Binôme tournant : Anas+Rebecca, Anas+Natalia, Rebecca+Natalia')
+  })
+
+  it('mouvement difficile : volume réduit ; non acquis : exclu du binôme', () => {
+    const team = athletes.map((a) => (a.id === 'a3' ? { ...a, competency: { ...a.competency, t2b: 'not_yet' as const, pullup: 'difficult' as const } } : a))
+    const base = gen()
+    const adapted = gen({ athletes: team })
+    const t2b = adapted.parts[0].items.find((i) => i.movementId === 't2b')!
+    expect(t2b.note).toContain('Binôme : Anas + Rebecca')
+    expect(adapted.parts[0].items.find((i) => i.movementId === 'pullup')!.qty).toBeLessThan(base.parts[0].items.find((i) => i.movementId === 'pullup')!.qty)
+  })
+
+  it('matériel manquant : remplacement ou retrait expliqué', () => {
+    const { parts, reasons } = gen({ equipment: ALL_EQUIPMENT.filter((e) => e !== 'bike' && e !== 'sandbag') })
+    const ids = parts.flatMap((p) => p.items.map((i) => i.movementId))
+    expect(ids).not.toContain('echo')
+    expect(ids).toContain('row')
+    expect(ids).not.toContain('sb_squat')
+    expect(reasons.some((r) => r.includes('Echo Bike remplacé par Rameur'))).toBe(true)
+  })
+
+  it('profils vides ou équipe incomplète : aucune exception', () => {
+    expect(gen({ athletes: [] }).parts).toHaveLength(3)
+    expect(gen({ athletes: athletes.slice(0, 2), equipment: [] }).parts).toHaveLength(3)
+  })
+
+  it('plus court et plus léger : moins de volume', () => {
+    expect(total(gen({ minutes: 30, intensity: 'light' }).parts, 4)).toBeLessThan(total(gen({ minutes: 60 }).parts, 4))
+  })
+})
+
+describe('avis, propositions et brief', () => {
+  it('avis d’une athlète : aller-retour et intégration sans toucher aux autres', () => {
+    const rebecca = { ...athletes[1], strengths: 'burpees, vélo', blockers: 'ring muscle-ups', competency: { t2b: 'manageable' as const } }
+    const received = decodeAthlete(encodeAthlete(rebecca))!
+    expect(received).toEqual(rebecca)
+    const merged = mergeAthlete(athletes, received)!
+    expect(merged[1].blockers).toBe('ring muscle-ups')
+    expect(merged[0]).toEqual(athletes[0])
+    expect(merged[2]).toEqual(athletes[2])
+  })
+
+  it('avis reconnu par le prénom si l’identifiant diffère, refusé si inconnu', () => {
+    expect(mergeAthlete(athletes, { ...athletes[2], id: 'zzz', level: 'RX' })![2]).toMatchObject({ id: 'a3', level: 'RX' })
+    expect(mergeAthlete(athletes, { ...athletes[2], id: 'zzz', name: 'Inconnue' })).toBeNull()
+    expect(decodeAthlete('abîmé')).toBeNull()
+  })
+
+  it('proposition de séance : aller-retour, lien abîmé refusé', () => {
+    const parts = defaultSessions(COMPETITION_DATE).map((s) => s.wod)
+    const back = decodeProposal(encodeProposal({ date: '2026-11-24', parts }))!
+    expect(back.date).toBe('2026-11-24')
+    expect(back.parts).toEqual(parts)
+    expect(decodeProposal('nope')).toBeNull()
+    expect(decodeProposal(encodeProposal({ date: 'x', parts }))).toBeNull()
+  })
+
+  it('brief pour Claude : complet et fidèle aux profils', () => {
+    const state = defaultState()
+    state.athletes[1].blockers = 'ring muscle-ups'
+    const brief = buildBrief(state, '2026-11-24')
+    for (const word of ['Anas', 'Rebecca', 'Natalia', 'WOD 1', 'WOD Final', 'J-4', 'Bloque sur : ring muscle-ups', 'Arrêt récent : 2 semaines', 'mini-WODs de maintien', 'DEMANDE']) {
+      expect(brief).toContain(word)
+    }
+    expect(brief.match(/Arrêt récent : (\d+)/)?.[1]).toBe('2')
+  })
+
+  it('profil par défaut : deux semaines d’arrêt, la prudence reste active', () => {
+    const anas = defaultAthletes()[0]
+    expect(anas.name).toBe('Anas')
+    expect(anas.breakWeeks).toBe(2)
+    expect(assessSession(tpl('tpl-a'), ctx(5)).context).toBeCloseTo(DEFAULT_CONFIG.inactivityFactor)
   })
 })

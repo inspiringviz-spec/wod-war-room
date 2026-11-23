@@ -40,6 +40,8 @@ import type {
 export const DEFAULT_CONFIG: RiskConfig = {
   amber: 100,
   red: 160,
+  dayAmber: 200,
+  dayRed: 300,
   weekAmber: 300,
   weekRed: 450,
   proximity: { '0': 2.2, '1': 2.0, '2': 1.6, '3': 1.2, '4': 1.05 },
@@ -473,8 +475,8 @@ export function assessSession(wod: Wod, ctx: RiskContext, rpeOverride?: number):
       title: demanding
         ? `Reprise récente de ${paused.name} : charge à modérer`
         : `Reprise récente de ${paused.name} prise en compte`,
-      explanation: `Une pause de ${paused.breakWeeks} semaines justifie une charge plus prudente : la tolérance au volume baisse plus vite que les sensations. Le score est majoré de ${pct(cfg.inactivityFactor - 1)}.`,
-      contributors: [`Pause de ${paused.breakWeeks} semaines (${paused.name})`],
+      explanation: `Après ${paused.breakWeeks} semaines d’arrêt, une charge plus prudente s’impose : la tolérance au volume baisse plus vite que les sensations. Le score est majoré de ${pct(cfg.inactivityFactor - 1)}.`,
+      contributors: [`${paused.breakWeeks} semaines d’arrêt (${paused.name})`],
       suggestions: ['Ne cherchez pas à rattraper le retard : réduisez le volume plutôt que d’ajouter des séances.'],
       fixLabel: demanding ? 'Réduire le volume de 25 %' : undefined,
       fix: demanding ? (w) => scaleItems(w, () => true, 0.75) : undefined,
@@ -684,15 +686,42 @@ export function assessWeek(input: WeekInput): WeekAssessment {
     const warnings: Warning[] = []
     const name = dayName(date).toLowerCase()
 
-    if (list.filter((x) => x.assessment.score >= 20).length >= 2) {
+    // Total de la séance complète (toutes les parties du jour).
+    if (score >= config.dayAmber) {
       warnings.push({
-        id: `multi-${date}`,
-        severity: 'amber',
-        title: `Plusieurs séances ${name}`,
-        explanation: 'Enchaîner plusieurs séances le même jour pour compenser un retard augmente la fatigue sans améliorer la préparation.',
-        contributors: list.map((x) => x.session.wod.name),
-        suggestions: ['Gardez une seule séance et déplacez ou supprimez l’autre.'],
+        id: `day-total-${date}`,
+        severity: score >= config.dayRed ? 'red' : 'amber',
+        title: score >= config.dayRed ? 'Séance complète trop chargée' : 'Séance complète chargée',
+        explanation: `Les parties cumulent ${Math.round(score)} pts (seuils : ${config.dayAmber} attention, ${config.dayRed} risque élevé). Chaque partie peut être raisonnable et l’ensemble trop lourd ${whenLabel(daysOut)}.`,
+        contributors: list.map((x) => `${x.session.wod.name} : ${Math.round(x.assessment.score)} pts`),
+        suggestions: ['Allégez toute la séance, raccourcissez une partie ou retirez-en une.'],
       })
+    }
+    // Volumes cumulés sur l'ensemble des parties.
+    if (list.length > 1) {
+      const wods = list.map((x) => x.session.wod)
+      const burpees = wods.reduce((s, w) => s + perAthleteRepsByTag(w, 'burpee'), 0)
+      const pulls = wods.reduce((s, w) => s + perAthleteRepsByTag(w, 'pull'), 0)
+      if (burpees > config.burpeeAmber && !list.some((x) => x.assessment.warnings.some((w) => w.id === 'burpees'))) {
+        warnings.push({
+          id: `day-burpees-${date}`,
+          severity: burpees > config.burpeeRed ? 'red' : 'amber',
+          title: `${Math.round(burpees)} burpees par athlète sur l’ensemble de la séance`,
+          explanation: 'Aucune partie ne dépasse le seuil seule, mais le cumul fatigue épaules, jambes et cardio.',
+          contributors: wods.filter((w) => perAthleteRepsByTag(w, 'burpee') > 0).map((w) => `${w.name} : ${Math.round(perAthleteRepsByTag(w, 'burpee'))}`),
+          suggestions: ['Réduisez les burpees dans une des parties.'],
+        })
+      }
+      if (pulls > config.gymAmber && !list.some((x) => x.assessment.warnings.some((w) => w.id === 'gym-volume'))) {
+        warnings.push({
+          id: `day-pulls-${date}`,
+          severity: pulls > config.gymRed ? 'red' : 'amber',
+          title: `${Math.round(pulls)} reps de gym à la barre par athlète sur l’ensemble de la séance`,
+          explanation: 'Le cumul des parties use le grip et la peau des mains à quelques jours de la compétition.',
+          contributors: wods.filter((w) => perAthleteRepsByTag(w, 'pull') > 0).map((w) => `${w.name} : ${Math.round(perAthleteRepsByTag(w, 'pull'))}`),
+          suggestions: ['Réduisez le tirage à la barre dans une des parties.'],
+        })
+      }
     }
     if (daysOut >= 1 && daysOut <= 2 && score >= config.amber * 0.6) {
       warnings.push({
@@ -740,7 +769,7 @@ export function assessWeek(input: WeekInput): WeekAssessment {
       id: 'week-total',
       severity: total >= config.weekRed ? 'red' : 'amber',
       title: total >= config.weekRed ? 'Charge de la semaine très élevée' : 'Charge de la semaine élevée',
-      explanation: `Total ${Math.round(total)} pts (seuils : ${config.weekAmber} / ${config.weekRed}). On ne rattrape pas trois semaines d’arrêt en cinq jours : l’objectif est d’arriver frais.`,
+      explanation: `Total ${Math.round(total)} pts (seuils : ${config.weekAmber} / ${config.weekRed}). On ne rattrape pas un arrêt en quelques jours : l’objectif est d’arriver frais.`,
       contributors: days.filter((d) => d.score > 0).map((d) => `${dayName(d.date)} : ${Math.round(d.score)} pts`),
       suggestions: ['Supprimez une séance ou réduisez les volumes des jours les plus chargés.'],
     })
@@ -750,6 +779,22 @@ export function assessWeek(input: WeekInput): WeekAssessment {
   for (const d of days) level = maxLevel(level, d.level)
   for (const w of warnings) level = maxLevel(level, levelFromSeverity(w.severity))
   return { days, total, level, warnings }
+}
+
+/**
+ * Allège toutes les parties d'une séance : d'abord l'alternative plus sûre de
+ * chaque partie, puis une réduction homogène jusqu'à repasser sous le seuil.
+ */
+export function lightenDay(wods: Wod[], ctx: RiskContext): Wod[] {
+  let out = wods.map((w) => saferAlternative(w, ctx).wod)
+  const total = () => out.reduce((s, w) => s + assessSession(w, ctx).score, 0)
+  for (let i = 0; i < 12 && total() >= ctx.config.dayAmber * 0.9; i++) {
+    const next = out.map((w) => scaleItems(w, () => true, 0.85))
+    const changed = next.some((w, k) => w.items.some((it, idx) => num(it.qty) !== num(out[k].items[idx].qty)))
+    if (!changed) break
+    out = next
+  }
+  return out
 }
 
 // ---------- Indice de fraîcheur ----------
@@ -767,7 +812,8 @@ export interface Readiness {
  * récupération déclarée). Ce n'est pas une mesure médicale.
  */
 export function readiness(week: WeekAssessment, athletes: Athlete[], config: RiskConfig): Readiness {
-  const loadPenalty = clamp((35 * week.total) / config.weekRed, 0, 35)
+  const heaviest = Math.max(0, ...week.days.map((d) => d.score))
+  const loadPenalty = clamp((35 * Math.max(heaviest / config.dayRed, week.total / config.weekRed)), 0, 35)
   const late = week.days.filter((d) => d.daysOut >= 1 && d.daysOut <= 2).reduce((s, d) => s + d.score, 0)
   // Une activation légère (jusqu'à 40 % du seuil d'attention) ne coûte rien.
   const latePenalty = clamp((25 * (late - config.amber * 0.4)) / (config.amber * 0.8), 0, 25)
@@ -802,7 +848,7 @@ export function readiness(week: WeekAssessment, athletes: Athlete[], config: Ris
     level,
     recoveryProvided: recCount > 0,
     parts: [
-      { label: 'Charge de la semaine', penalty: loadPenalty, max: 35, detail: `${Math.round(week.total)} pts planifiés` },
+      { label: 'Charge de la séance', penalty: loadPenalty, max: 35, detail: `${Math.round(week.total)} pts planifiés` },
       { label: 'Séances à J-2 / J-1', penalty: latePenalty, max: 25, detail: `${Math.round(late)} pts sur les deux derniers jours` },
       {
         label: 'Récupération déclarée',

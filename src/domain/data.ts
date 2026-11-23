@@ -1,5 +1,7 @@
-import { addDays, instantiate, uid } from './calc'
+import { addDays, daysBetween, instantiate, uid } from './calc'
+import { ALL_EQUIPMENT } from './movements'
 import { DEFAULT_CONFIG } from './risk'
+import { generateTeamSession } from './teamSession'
 import type { AppState, Athlete, Objective, Scenario, Session, StrategyState, Wod } from './types'
 
 export const COMPETITION_DATE = '2026-11-28'
@@ -311,13 +313,13 @@ export function template(id: string): Template | undefined {
   return TEMPLATES.find((t) => t.id === id)
 }
 
-/** Recommandation par défaut selon les jours restants. */
-export const DAY_GUIDE: Record<number, { title: string; detail: string; templateId?: string }> = {
-  5: { title: 'Technique et conditionnement modérés', detail: 'Retrouver les sensations sur la barre et la box, sans forcer.', templateId: 'tpl-a' },
-  4: { title: 'Répétition d’équipe contrôlée', detail: 'Dérouler le final en version courte pour caler l’ordre et les rôles.', templateId: 'tpl-c' },
-  3: { title: 'Synchro et transitions, format court', detail: 'Dernier bloc avec un peu de rythme. Rien de long.', templateId: 'tpl-express' },
-  2: { title: 'Repos ou mobilité', detail: 'Aucune séance exigeante : la forme se construit maintenant au repos.', templateId: 'tpl-mobility' },
-  1: { title: 'Activation légère (facultative)', detail: 'Dix minutes pour réveiller le corps, ou repos complet.', templateId: 'tpl-activation' },
+/** Conseil selon le jour choisi pour l'unique séance d'équipe. */
+export const DAY_GUIDE: Record<number, { title: string; detail: string }> = {
+  5: { title: 'Très bon créneau', detail: 'Assez loin de samedi pour un vrai travail à trois, avec le temps de récupérer.' },
+  4: { title: 'Bon créneau', detail: 'Quatre jours de récupération : la séance complète en trois parties passe bien.' },
+  3: { title: 'Créneau correct', detail: 'Gardez des parties courtes et une intensité modérée.' },
+  2: { title: 'Créneau tardif', detail: 'À 48 h, restez sur la technique et la synchro : pas de chrono, pas de charge.' },
+  1: { title: 'Veille de compétition', detail: 'Activation très légère de dix minutes, ou repos complet.' },
   0: { title: 'Compétition', detail: 'Échauffement, stratégie, plaisir.' },
 }
 
@@ -331,6 +333,8 @@ export function emptyAthlete(id: string, name: string, sex: 'M' | 'F'): Athlete 
     conditioning: '',
     breakWeeks: 0,
     notes: '',
+    strengths: '',
+    blockers: '',
     rm: {},
     unbroken: {},
     competency: {},
@@ -340,35 +344,34 @@ export function emptyAthlete(id: string, name: string, sex: 'M' | 'F'): Athlete 
 }
 
 export function defaultAthletes(): Athlete[] {
-  const a1 = emptyAthlete('a1', 'Athlète 1', 'M')
+  const a1 = emptyAthlete('a1', 'Anas', 'M')
   a1.experience = 'Pratique le CrossFit'
   a1.conditioning = '5 km en environ 30 min (récent)'
-  a1.breakWeeks = 3
-  a1.notes = 'Reprise après trois semaines sans entraînement : charge à gérer avec prudence.'
+  a1.breakWeeks = 2
+  a1.notes = 'Deux semaines d’arrêt, avec des mini-WODs de maintien.'
   a1.rm = { snatch: 60, cleanJerk: 75, thruster: 87.5 }
   a1.unbroken = { t2b: 15, c2b: 15, bmu: 1, rmu: 0 }
   a1.competency = { t2b: 'comfortable', c2b: 'comfortable', bmu: 'difficult', rmu: 'not_yet' }
 
-  const a2 = emptyAthlete('a2', 'Athlète 2', 'F')
+  const a2 = emptyAthlete('a2', 'Rebecca', 'F')
   a2.level = 'Entre Inter et RX'
-  const a3 = emptyAthlete('a3', 'Athlète 3', 'F')
+  const a3 = emptyAthlete('a3', 'Natalia', 'F')
   a3.level = 'Entre Inter et RX'
   return [a1, a2, a3]
 }
 
-export function defaultSessions(competitionDate: string): Session[] {
-  const out: Session[] = []
-  for (const [daysOut, guide] of Object.entries(DAY_GUIDE)) {
-    const tpl = guide.templateId ? template(guide.templateId) : undefined
-    if (!tpl) continue
-    out.push({
-      id: uid(),
-      date: addDays(competitionDate, -Number(daysOut)),
-      wod: instantiate(tpl.wod),
-      done: false,
-    })
-  }
-  return out.sort((a, b) => a.date.localeCompare(b.date))
+/** Séance d'équipe par défaut : trois parties générées à partir des profils. */
+export function defaultSessions(competitionDate: string, date?: string, athletes: Athlete[] = defaultAthletes()): Session[] {
+  const day = date ?? addDays(competitionDate, -5)
+  const { parts } = generateTeamSession({
+    athletes,
+    daysOut: daysBetween(day, competitionDate),
+    config: DEFAULT_CONFIG,
+    minutes: 45,
+    intensity: 'moderate',
+    equipment: ALL_EQUIPMENT,
+  })
+  return parts.map((wod) => ({ id: uid(), date: day, wod, done: false }))
 }
 
 export function emptyScenario(): Scenario {

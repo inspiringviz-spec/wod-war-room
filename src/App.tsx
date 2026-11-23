@@ -1,8 +1,9 @@
-import { CalendarDays, Hammer, History, Home, Menu, Share2, ShieldCheck, Swords, Timer, Users } from 'lucide-react'
+import { Dumbbell, Hammer, History, Home, Menu, MessageSquareHeart, Share2, ShieldCheck, Swords, Timer } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { dayName, shortDate } from './domain/calc'
-import { decodeState, decodeWod } from './domain/share'
+import { COMPETENCY_MOVEMENTS } from './domain/movements'
+import { decodeAthlete, decodeProposal, decodeState, decodeWod, mergeAthlete } from './domain/share'
 import { defaultTrainingDay, go, useRoute, useStore } from './state/store'
 import type { Page } from './state/store'
 import { Button, cx, LEVEL_BG, Notice, Sheet } from './ui/kit'
@@ -19,16 +20,16 @@ import { Wods } from './pages/Wods'
 
 const NAV: { page: Page; label: string; short: string; icon: LucideIcon }[] = [
   { page: 'dashboard', label: 'Tableau de bord', short: 'Accueil', icon: Home },
-  { page: 'week', label: 'Semaine de compétition', short: 'Semaine', icon: CalendarDays },
+  { page: 'wods', label: 'WODs de l’an dernier', short: 'WODs N-1', icon: History },
+  { page: 'team', label: 'Mon avis', short: 'Mon avis', icon: MessageSquareHeart },
+  { page: 'week', label: 'Séance d’équipe', short: 'Séance', icon: Dumbbell },
+  { page: 'live', label: 'Chrono', short: 'Chrono', icon: Timer },
   { page: 'builder', label: 'Mini-WOD Builder', short: 'Builder', icon: Hammer },
-  { page: 'live', label: 'Mode séance', short: 'Séance', icon: Timer },
-  { page: 'team', label: 'Équipe et compétences', short: 'Équipe', icon: Users },
   { page: 'strategy', label: 'Stratégie d’équipe', short: 'Stratégie', icon: Swords },
   { page: 'guard', label: 'Fatigue Guard', short: 'Fatigue', icon: ShieldCheck },
-  { page: 'wods', label: 'WODs de référence', short: 'WODs N-1', icon: History },
 ]
 
-const MOBILE: Page[] = ['dashboard', 'week', 'builder', 'team']
+const MOBILE: Page[] = ['dashboard', 'wods', 'team', 'week']
 
 function Logo() {
   return (
@@ -46,6 +47,8 @@ function ImportGate() {
   const { replace, update, toast, today, state } = useStore()
   const plan = useMemo(() => (route.page === 'import' ? decodeState(route.param) : null), [route.page, route.param])
   const wod = useMemo(() => (route.page === 'wod' ? decodeWod(route.param) : null), [route.page, route.param])
+  const avis = useMemo(() => (route.page === 'avis' ? decodeAthlete(route.param) : null), [route.page, route.param])
+  const proposal = useMemo(() => (route.page === 'seance' ? decodeProposal(route.param) : null), [route.page, route.param])
   const close = () => go('dashboard', '', true)
 
   if (route.page === 'import') {
@@ -85,6 +88,111 @@ function ImportGate() {
         ) : (
           <div className="space-y-3">
             <Notice tone="red">Ce lien est incomplet ou abîmé. Demandez à votre coéquipier de le renvoyer en entier.</Notice>
+            <Button className="w-full" onClick={close}>
+              Fermer
+            </Button>
+          </div>
+        )}
+      </Sheet>
+    )
+  }
+
+  if (route.page === 'avis') {
+    const merged = avis ? mergeAthlete(state.athletes, avis) : null
+    const rated = avis ? COMPETENCY_MOVEMENTS.filter((id) => avis.competency[id]).length : 0
+    return (
+      <Sheet open onClose={close} title={avis ? `Avis de ${avis.name}` : 'Avis partagé'}>
+        {avis && merged ? (
+          <div className="space-y-3">
+            <ul className="space-y-1.5 rounded-xl bg-panel2 p-3 text-[13px] leading-snug">
+              <li>
+                <span className="text-mute">Mouvements évalués :</span> {rated} / {COMPETENCY_MOVEMENTS.length}
+              </li>
+              {avis.strengths && (
+                <li>
+                  <span className="text-mute">À l’aise sur :</span> {avis.strengths}
+                </li>
+              )}
+              {avis.blockers && (
+                <li>
+                  <span className="text-mute">Bloque sur :</span> {avis.blockers}
+                </li>
+              )}
+              {avis.recovery.pain && (
+                <li>
+                  <span className="text-mute">Douleur ou gêne :</span> {avis.recovery.pain}
+                </li>
+              )}
+            </ul>
+            <Notice>La fiche de {avis.name} sur ce téléphone sera remplacée par cet avis. Les autres fiches et la séance ne changent pas.</Notice>
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                className="flex-1"
+                onClick={() => {
+                  update((s) => {
+                    s.athletes = merged
+                  })
+                  toast(`Avis de ${avis.name} intégré : régénérez la séance`)
+                  go('week', '', true)
+                }}
+              >
+                Intégrer cet avis
+              </Button>
+              <Button onClick={close}>Ignorer</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <Notice tone="red">{avis ? `Aucun athlète nommé ${avis.name} dans l’équipe de ce téléphone.` : 'Ce lien est incomplet ou abîmé. Demandez qu’on vous le renvoie en entier.'}</Notice>
+            <Button className="w-full" onClick={close}>
+              Fermer
+            </Button>
+          </div>
+        )}
+      </Sheet>
+    )
+  }
+
+  if (route.page === 'seance') {
+    return (
+      <Sheet open onClose={close} title="Proposition de séance">
+        {proposal ? (
+          <div className="space-y-3">
+            <p className="text-sm leading-snug text-mute">
+              Séance proposée pour {dayName(proposal.date).toLowerCase()} {shortDate(proposal.date).replace(/\.$/, '')} : {proposal.parts.length} partie{proposal.parts.length > 1 ? 's' : ''}.
+            </p>
+            <ul className="max-h-[45dvh] space-y-3 overflow-y-auto rounded-xl bg-panel2 p-3">
+              {proposal.parts.map((p) => (
+                <li key={p.id}>
+                  <p className="text-sm font-semibold">{p.name}</p>
+                  <WodView wod={p} />
+                </li>
+              ))}
+            </ul>
+            <Notice tone="amber">Adopter cette proposition remplace la séance de ce téléphone. Les avis et les profils ne changent pas.</Notice>
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                className="flex-1"
+                onClick={() => {
+                  update((s) => {
+                    s.sessions = proposal.parts.map((w) => ({ id: `${w.id}-s`, date: proposal.date, wod: w, done: false }))
+                    s.draftSessionId = undefined
+                    s.draftDate = proposal.date
+                  })
+                  toast('Proposition adoptée')
+                  go('week', '', true)
+                }}
+              >
+                Adopter cette séance
+              </Button>
+              <Button onClick={close}>Garder la mienne</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <Notice tone="red">Ce lien est incomplet ou abîmé. Demandez qu’on vous le renvoie en entier.</Notice>
             <Button className="w-full" onClick={close}>
               Fermer
             </Button>
@@ -138,7 +246,7 @@ export default function App() {
   const { daysOut, week, toastMessage, storageOk } = useStore()
   const [share, setShare] = useState(false)
   const [more, setMore] = useState(false)
-  const page: Page = route.page === 'import' || route.page === 'wod' ? 'dashboard' : route.page
+  const page: Page = ['import', 'wod', 'avis', 'seance'].includes(route.page) ? 'dashboard' : route.page
   const countdown = daysOut > 0 ? `J-${daysOut}` : daysOut === 0 ? 'Jour J' : 'Terminé'
 
   return (

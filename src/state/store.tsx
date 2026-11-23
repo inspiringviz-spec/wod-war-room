@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { daysBetween, todayISO, weekDays } from '../domain/calc'
-import { defaultState } from '../domain/data'
+import { defaultSessions, defaultState } from '../domain/data'
 import { assessWeek, readiness } from '../domain/risk'
 import type { Readiness, RiskContext, WeekAssessment } from '../domain/risk'
 import { sanitizeState } from '../domain/share'
 import type { AppState } from '../domain/types'
 
-const STORAGE_KEY = 'wod-war-room:v1'
+const STORAGE_KEY = 'wod-war-room:v2'
 
 function load(): AppState {
   try {
@@ -19,7 +19,15 @@ function load(): AppState {
   } catch {
     // Stockage indisponible ou corrompu : on repart du plan par défaut.
   }
-  return defaultState()
+  // Premier lancement : la séance par défaut est placée aujourd'hui si possible.
+  const state = defaultState()
+  const today = todayISO()
+  const days = weekDays(state.competitionDate).filter((d) => d !== state.competitionDate)
+  if (days.includes(today) && today !== state.draftDate) {
+    state.sessions = defaultSessions(state.competitionDate, today, state.athletes)
+    state.draftDate = today
+  }
+  return state
 }
 
 function save(state: AppState): void {
@@ -145,11 +153,21 @@ export function defaultTrainingDay(competitionDate: string, today: string): stri
   return days.includes(today) ? today : days[0]
 }
 
+/** Jour de l'unique séance d'équipe : celui des parties planifiées, sinon aujourd'hui. */
+export function useSessionDate(): string {
+  const { state, today } = useStore()
+  const days = weekDays(state.competitionDate).filter((d) => d !== state.competitionDate)
+  const planned = state.sessions.find((s) => days.includes(s.date))
+  if (planned) return planned.date
+  if (days.includes(state.draftDate)) return state.draftDate
+  return days.includes(today) ? today : days[0]
+}
+
 // ---------- Routage par hash (compatible GitHub Pages, aucun 404) ----------
 
-export type Page = 'dashboard' | 'wods' | 'builder' | 'guard' | 'strategy' | 'week' | 'team' | 'live' | 'import' | 'wod'
+export type Page = 'dashboard' | 'wods' | 'builder' | 'guard' | 'strategy' | 'week' | 'team' | 'live' | 'import' | 'wod' | 'avis' | 'seance'
 
-const PAGES: Page[] = ['dashboard', 'wods', 'builder', 'guard', 'strategy', 'week', 'team', 'live', 'import', 'wod']
+const PAGES: Page[] = ['dashboard', 'wods', 'builder', 'guard', 'strategy', 'week', 'team', 'live', 'import', 'wod', 'avis', 'seance']
 
 export interface Route {
   page: Page

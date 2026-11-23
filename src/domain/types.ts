@@ -81,6 +81,10 @@ export interface Athlete {
   conditioning: string
   breakWeeks: number
   notes: string
+  /** Auto-évaluation libre : ce sur quoi l'athlète se sent à l'aise. */
+  strengths: string
+  /** Auto-évaluation libre : ce sur quoi l'athlète bloque. */
+  blockers: string
   rm: Partial<Record<RmKey, number>>
   /** Max de répétitions enchaînées, par mouvement. */
   unbroken: Record<string, number>
@@ -158,6 +162,9 @@ export interface StrategyState {
 export interface RiskConfig {
   amber: number
   red: number
+  /** Seuils pour le total d'une séance complète (toutes les parties du jour). */
+  dayAmber: number
+  dayRed: number
   weekAmber: number
   weekRed: number
   /** Multiplicateur selon les jours restants (clé = jours avant la compétition). */

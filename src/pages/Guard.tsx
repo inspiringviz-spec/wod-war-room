@@ -51,19 +51,20 @@ function NumberSetting({ label, value, onChange, step = 1, min = 0, max = 9999, 
 }
 
 export function Guard() {
-  const { state, update, week, ready, today, toast } = useStore()
+  const { state, update, week, ready, toast } = useStore()
   const [settings, setSettings] = useState(false)
   const cfg = state.config
   const setCfg = (fn: (c: RiskConfig) => void) => update((s) => fn(s.config))
 
-  const chart = week.days.map((d) => ({ name: dayName(d.date).slice(0, 3), score: Math.round(d.score), level: d.level, today: d.date === today }))
+  const sessionDay = week.days.find((d) => d.sessions.length > 0)
+  const chart = (sessionDay?.sessions ?? []).map((s, i) => ({ name: `Partie ${i + 1}`, score: Math.round(s.assessment.score), level: s.assessment.level, today: true }))
   const zones = emptyTagPoints()
   for (const d of week.days) for (const s of d.sessions) for (const t of RADAR_TAGS) zones[t] += s.assessment.tagPoints[t]
   const radar = RADAR_TAGS.map((t) => ({ zone: TAG_LABEL[t], value: Math.round(zones[t]) }))
   const hasLoad = radar.some((r) => r.value > 0)
 
   const allAlerts = [
-    ...week.warnings.map((w) => ({ where: 'Semaine', w, sessionId: undefined as string | undefined })),
+    ...week.warnings.map((w) => ({ where: 'Ensemble', w, sessionId: undefined as string | undefined })),
     ...week.days.flatMap((d) => [
       ...d.warnings.filter((w) => w.severity !== 'info').map((w) => ({ where: dayName(d.date), w, sessionId: undefined as string | undefined })),
       ...d.sessions.flatMap((s) =>
@@ -119,10 +120,10 @@ export function Guard() {
         <Card>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <Eyebrow>Charge par jour</Eyebrow>
+              <Eyebrow>Charge par partie{sessionDay ? ` · ${dayName(sessionDay.date).toLowerCase()}` : ''}</Eyebrow>
               <p className="mt-1.5 flex items-baseline gap-2">
                 <span className="tabular font-display text-4xl leading-none font-bold">{Math.round(week.total)}</span>
-                <span className="text-sm text-mute">pts · seuils {cfg.weekAmber} / {cfg.weekRed}</span>
+                <span className="text-sm text-mute">pts · seuils {cfg.dayAmber} / {cfg.dayRed}</span>
               </p>
             </div>
             <LevelPill level={week.level} />
@@ -143,14 +144,14 @@ export function Guard() {
             </ResponsiveContainer>
           </div>
           <p className="text-[11px] leading-snug text-dim">
-            Pointillés : seuils « attention » ({cfg.amber}) et « risque élevé » ({cfg.red}) pour une journée. Les points
-            sont déjà majorés à l’approche de la compétition.
+            Pointillés : seuils « attention » ({cfg.amber}) et « risque élevé » ({cfg.red}) pour une partie. Le total de
+            la séance a ses propres seuils. Les points sont déjà majorés à l’approche de la compétition.
           </p>
         </Card>
       </div>
 
       <Card className="mt-4">
-        <Eyebrow>Zones sollicitées sur la semaine</Eyebrow>
+        <Eyebrow>Zones sollicitées par la séance</Eyebrow>
         {hasLoad ? (
           <div className="mx-auto mt-2 h-56 max-w-md" role="img" aria-label={`Points par zone : ${radar.map((r) => `${r.zone} ${r.value}`).join(', ')}`}>
             <ResponsiveContainer width="100%" height="100%">
@@ -174,7 +175,7 @@ export function Guard() {
       </Card>
 
       <Card className="mt-4" tone={allAlerts.some((a) => a.w.severity === 'red') ? 'red' : allAlerts.length ? 'amber' : undefined}>
-        <Eyebrow>Alertes de la semaine</Eyebrow>
+        <Eyebrow>Alertes</Eyebrow>
         {allAlerts.length === 0 ? (
           <p className="mt-2 flex items-start gap-2 text-[13px] leading-snug text-mute">
             <ShieldCheck size={16} aria-hidden className="mt-0.5 shrink-0 text-lime" />
@@ -217,7 +218,7 @@ export function Guard() {
       <Card className="mt-4">
         <Eyebrow>Récupération déclarée</Eyebrow>
         <p className="mt-1 text-[13px] leading-snug text-mute">
-          Facultatif, à remplir chaque matin. Sommeil bas, fortes courbatures ou énergie basse rendent l’indicateur plus
+          Facultatif, à remplir le jour de la séance. Sommeil bas, fortes courbatures ou énergie basse rendent l’indicateur plus
           prudent. Touchez à nouveau une valeur pour l’effacer.
         </p>
         <div className="mt-4 grid gap-5 md:grid-cols-3">
@@ -282,6 +283,8 @@ export function Guard() {
               <div className="grid grid-cols-2 gap-3">
                 <NumberSetting label="Séance : attention" value={cfg.amber} step={5} min={10} max={1000} onChange={(v) => setCfg((c) => { c.amber = v; if (c.red <= v) c.red = v + 5 })} />
                 <NumberSetting label="Séance : risque élevé" value={cfg.red} step={5} min={15} max={2000} onChange={(v) => setCfg((c) => { c.red = Math.max(v, c.amber + 5) })} />
+                <NumberSetting label="Séance complète : attention" value={cfg.dayAmber} step={10} min={20} max={3000} onChange={(v) => setCfg((c) => { c.dayAmber = v; if (c.dayRed <= v) c.dayRed = v + 10 })} />
+                <NumberSetting label="Séance complète : risque élevé" value={cfg.dayRed} step={10} min={30} max={6000} onChange={(v) => setCfg((c) => { c.dayRed = Math.max(v, c.dayAmber + 10) })} />
                 <NumberSetting label="Semaine : attention" value={cfg.weekAmber} step={10} min={20} max={5000} onChange={(v) => setCfg((c) => { c.weekAmber = v; if (c.weekRed <= v) c.weekRed = v + 10 })} />
                 <NumberSetting label="Semaine : risque élevé" value={cfg.weekRed} step={10} min={30} max={10000} onChange={(v) => setCfg((c) => { c.weekRed = Math.max(v, c.weekAmber + 10) })} />
                 <NumberSetting label="Burpees / athlète : attention" value={cfg.burpeeAmber} min={5} max={500} onChange={(v) => setCfg((c) => { c.burpeeAmber = v; if (c.burpeeRed <= v) c.burpeeRed = v + 5 })} />
