@@ -22,7 +22,7 @@ import { Wods } from './pages/Wods'
 
 const NAV: { page: Page; label: string; short: string; icon: LucideIcon }[] = [
   { page: 'dashboard', label: 'Tableau de bord', short: 'Accueil', icon: Home },
-  { page: 'wods', label: 'WODs de l’an dernier', short: 'WODs N-1', icon: History },
+  { page: 'wods', label: 'WODs 2025', short: 'WODs 2025', icon: History },
   { page: 'team', label: 'Mon avis', short: 'Mon avis', icon: MessageSquareHeart },
   { page: 'week', label: 'Séance d’équipe', short: 'Séance', icon: Dumbbell },
   { page: 'live', label: 'Chrono', short: 'Chrono', icon: Timer },

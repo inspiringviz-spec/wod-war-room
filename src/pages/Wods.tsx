@@ -26,7 +26,7 @@ export function Wods({ initial }: { initial?: string }) {
 
   return (
     <div>
-      <PageHeader eyebrow="Édition précédente" title="WODs de l’an dernier" />
+      <PageHeader eyebrow="Édition 2025" title="WODs 2025" />
 
       <Notice className="mb-4">
         <span className="flex items-start gap-2">
