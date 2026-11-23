@@ -5,9 +5,47 @@ import { defaultSessions, defaultState } from '../domain/data'
 import { assessWeek, readiness } from '../domain/risk'
 import type { Readiness, RiskContext, WeekAssessment } from '../domain/risk'
 import { sanitizeState } from '../domain/share'
+import { isValidTeamCode, mergeDoc, normalizeTeamCode, sectionHashes, stampChanges, toDoc } from '../domain/sync'
+import type { Stamps } from '../domain/sync'
 import type { AppState } from '../domain/types'
+import { fetchTeam, saveTeam, syncAvailable } from './remote'
 
 const STORAGE_KEY = 'wod-war-room:v2'
+const TEAM_KEY = 'wod-war-room:team'
+const STAMPS_KEY = 'wod-war-room:stamps'
+
+export type SyncStatus = 'off' | 'syncing' | 'ok' | 'offline' | 'error'
+
+function loadTeam(): string {
+  try {
+    const code = normalizeTeamCode(window.localStorage.getItem(TEAM_KEY) ?? '')
+    return syncAvailable && isValidTeamCode(code) ? code : ''
+  } catch {
+    return ''
+  }
+}
+
+function loadStamps(): Stamps {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(STAMPS_KEY) ?? '{}') as unknown
+    const out: Stamps = {}
+    if (typeof raw === 'object' && raw !== null) {
+      for (const [k, v] of Object.entries(raw)) if (typeof v === 'number' && Number.isFinite(v)) out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function persist(key: string, value: string | null): void {
+  try {
+    if (value === null) window.localStorage.removeItem(key)
+    else window.localStorage.setItem(key, value)
+  } catch {
+    // stockage indisponible : la synchro continue en mémoire
+  }
+}
 
 function load(): AppState {
   try {
@@ -63,6 +101,13 @@ interface Store {
   toast: (message: string) => void
   toastMessage: string | null
   storageOk: boolean
+  /** Code de l'équipe synchronisée, ou chaîne vide. */
+  teamCode: string
+  syncStatus: SyncStatus
+  lastSync: number | null
+  joinTeam: (code: string) => void
+  leaveTeam: () => void
+  syncNow: () => void
 }
 
 const StoreContext = createContext<Store | null>(null)
@@ -74,9 +119,114 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [storageOk] = useState(storageAvailable)
   const timer = useRef<number | undefined>(undefined)
 
+  // --- Synchronisation d'équipe ---
+  const [teamCode, setTeamCode] = useState(loadTeam)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (loadTeam() ? 'syncing' : 'off'))
+  const [lastSync, setLastSync] = useState<number | null>(null)
+  const stateRef = useRef(state)
+  const codeRef = useRef(teamCode)
+  const hashesRef = useRef<Record<string, string> | null>(null)
+  const stampsRef = useRef<Stamps | null>(null)
+  const busyRef = useRef(false)
+  const dirtyRef = useRef(false)
+  const debounceRef = useRef<number | undefined>(undefined)
+  const cycleRef = useRef<() => void>(() => undefined)
+
+  /** Un aller-retour : lire l'équipe, fusionner, renvoyer ce qui est plus récent ici. */
+  const cycle = useCallback(async () => {
+    const code = codeRef.current
+    if (!code) return
+    if (busyRef.current) {
+      dirtyRef.current = true
+      return
+    }
+    busyRef.current = true
+    try {
+      const remote = await fetchTeam(code)
+      if (codeRef.current !== code) return
+      const res = mergeDoc(stateRef.current, stampsRef.current ?? {}, remote?.doc ?? null)
+      stampsRef.current = res.stamps
+      persist(STAMPS_KEY, JSON.stringify(res.stamps))
+      if (res.changed) {
+        hashesRef.current = sectionHashes(res.state)
+        stateRef.current = res.state
+        setState(res.state)
+      }
+      if (res.needsPush) {
+        const version = await saveTeam(code, toDoc(res.state, res.stamps), remote?.version ?? 0)
+        // Refusé : un autre téléphone a écrit entre-temps, on refait un tour.
+        if (version === null) dirtyRef.current = true
+      }
+      setSyncStatus('ok')
+      setLastSync(Date.now())
+    } catch {
+      setSyncStatus(navigator.onLine === false ? 'offline' : 'error')
+    } finally {
+      busyRef.current = false
+      if (dirtyRef.current) {
+        dirtyRef.current = false
+        window.setTimeout(() => cycleRef.current(), 600)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    cycleRef.current = () => void cycle()
+  }, [cycle])
+
   useEffect(() => {
     save(state)
+    stateRef.current = state
+    if (!stampsRef.current) stampsRef.current = loadStamps()
+    if (!hashesRef.current) {
+      hashesRef.current = sectionHashes(state)
+      return
+    }
+    // Chaque section modifiée ici reçoit l'heure de la modification.
+    const res = stampChanges(hashesRef.current, state, stampsRef.current, Date.now())
+    hashesRef.current = res.hashes
+    if (!res.changed) return
+    stampsRef.current = res.stamps
+    persist(STAMPS_KEY, JSON.stringify(res.stamps))
+    if (codeRef.current) {
+      window.clearTimeout(debounceRef.current)
+      debounceRef.current = window.setTimeout(() => cycleRef.current(), 700)
+    }
   }, [state])
+
+  useEffect(() => {
+    codeRef.current = teamCode
+    if (!teamCode) return
+    const run = () => {
+      if (document.visibilityState === 'visible') cycleRef.current()
+    }
+    run()
+    const id = window.setInterval(run, 5000)
+    window.addEventListener('online', run)
+    document.addEventListener('visibilitychange', run)
+    return () => {
+      window.clearInterval(id)
+      window.removeEventListener('online', run)
+      document.removeEventListener('visibilitychange', run)
+    }
+  }, [teamCode])
+
+  const joinTeam = useCallback((input: string) => {
+    const code = normalizeTeamCode(input)
+    if (!syncAvailable || !isValidTeamCode(code)) return
+    persist(TEAM_KEY, code)
+    setSyncStatus('syncing')
+    setTeamCode(code)
+  }, [])
+
+  const leaveTeam = useCallback(() => {
+    persist(TEAM_KEY, null)
+    setTeamCode('')
+    setSyncStatus('off')
+    setLastSync(null)
+  }, [])
+
+  const syncNow = useCallback(() => cycleRef.current(), [])
 
   useEffect(() => {
     const refresh = () => setToday(todayISO())
@@ -137,6 +287,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toast,
     toastMessage,
     storageOk,
+    teamCode,
+    syncStatus,
+    lastSync,
+    joinTeam,
+    leaveTeam,
+    syncNow,
   }
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }
@@ -165,9 +321,9 @@ export function useSessionDate(): string {
 
 // ---------- Routage par hash (compatible GitHub Pages, aucun 404) ----------
 
-export type Page = 'dashboard' | 'wods' | 'builder' | 'guard' | 'strategy' | 'week' | 'team' | 'live' | 'import' | 'wod' | 'avis' | 'seance'
+export type Page = 'dashboard' | 'wods' | 'builder' | 'guard' | 'strategy' | 'week' | 'team' | 'live' | 'import' | 'wod' | 'avis' | 'seance' | 'equipe'
 
-const PAGES: Page[] = ['dashboard', 'wods', 'builder', 'guard', 'strategy', 'week', 'team', 'live', 'import', 'wod', 'avis', 'seance']
+const PAGES: Page[] = ['dashboard', 'wods', 'builder', 'guard', 'strategy', 'week', 'team', 'live', 'import', 'wod', 'avis', 'seance', 'equipe']
 
 export interface Route {
   page: Page

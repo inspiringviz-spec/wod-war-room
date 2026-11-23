@@ -19,6 +19,7 @@ import { assessSession, assessWeek, DEFAULT_CONFIG, lightenDay, readiness, safer
 import type { RiskContext } from './risk'
 import { buildBrief } from './brief'
 import { decodeAthlete, decodeProposal, decodeState, decodeWod, encodeAthlete, encodeProposal, encodeState, encodeWod, mergeAthlete, parseJSONState, sanitizeState, sanitizeWod } from './share'
+import { isValidTeamCode, mergeDoc, newTeamCode, normalizeTeamCode, sanitizeDoc, sectionHashes, stampChanges, toDoc } from './sync'
 import { generateTeamSession } from './teamSession'
 import { bottlenecks, distribution, pairInsights } from './strategy'
 import type { Wod } from './types'
@@ -621,5 +622,126 @@ describe('avis, propositions et brief', () => {
     expect(anas.name).toBe('Anas')
     expect(anas.breakWeeks).toBe(2)
     expect(assessSession(tpl('tpl-a'), ctx(5)).context).toBeCloseTo(DEFAULT_CONFIG.inactivityFactor)
+  })
+})
+
+describe('synchronisation d’équipe', () => {
+  const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T
+
+  it('seules les sections modifiées sont horodatées', () => {
+    const before = defaultState()
+    const after = clone(before)
+    after.athletes[1].blockers = 'ring muscle-ups'
+    const res = stampChanges(sectionHashes(before), after, {}, 1000)
+    expect(res.changed).toBe(true)
+    expect(res.stamps).toEqual({ 'athlete:a2': 1000 })
+    expect(stampChanges(res.hashes, after, res.stamps, 2000).changed).toBe(false)
+  })
+
+  it('le brouillon du builder ne se synchronise pas', () => {
+    const before = defaultState()
+    const after = clone(before)
+    after.draft.name = 'Brouillon perso'
+    after.draftDate = '2026-11-26'
+    expect(stampChanges(sectionHashes(before), after, {}, 1000).changed).toBe(false)
+  })
+
+  it('équipe vide : le premier téléphone crée le plan', () => {
+    const state = defaultState()
+    const res = mergeDoc(state, {}, null)
+    expect(res.changed).toBe(false)
+    expect(res.needsPush).toBe(true)
+    expect(Object.keys(toDoc(state, {}).sections).sort()).toEqual(['athlete:a1', 'athlete:a2', 'athlete:a3', 'session', 'settings', 'strategy'])
+  })
+
+  it('deux athlètes modifient leur fiche en même temps : rien n’est perdu', () => {
+    const base = defaultState()
+    const anas = clone(base)
+    anas.athletes[0].strengths = 'toes-to-bar'
+    const anasStamps = { 'athlete:a1': 1000 }
+    const rebecca = clone(base)
+    rebecca.athletes[1].blockers = 'ring muscle-ups'
+    const rebeccaStamps = { 'athlete:a2': 1500 }
+
+    // Anas publie, Rebecca fusionne puis publie, Anas fusionne.
+    const server1 = toDoc(anas, anasStamps)
+    const onRebecca = mergeDoc(rebecca, rebeccaStamps, server1)
+    expect(onRebecca.changed).toBe(true)
+    expect(onRebecca.needsPush).toBe(true)
+    expect(onRebecca.state.athletes[0].strengths).toBe('toes-to-bar')
+    expect(onRebecca.state.athletes[1].blockers).toBe('ring muscle-ups')
+
+    const server2 = toDoc(onRebecca.state, onRebecca.stamps)
+    const onAnas = mergeDoc(anas, anasStamps, server2)
+    expect(onAnas.changed).toBe(true)
+    expect(onAnas.needsPush).toBe(false)
+    expect(onAnas.state.athletes).toEqual(onRebecca.state.athletes)
+    expect(mergeDoc(onAnas.state, onAnas.stamps, server2)).toMatchObject({ changed: false, needsPush: false })
+  })
+
+  it('même section modifiée deux fois : la plus récente l’emporte, des deux côtés', () => {
+    const base = defaultState()
+    const older = clone(base)
+    older.athletes[2].level = 'Inter'
+    const newer = clone(base)
+    newer.athletes[2].level = 'RX'
+    const server = toDoc(newer, { 'athlete:a3': 2000 })
+    expect(mergeDoc(older, { 'athlete:a3': 1000 }, server).state.athletes[2].level).toBe('RX')
+    const reverse = mergeDoc(newer, { 'athlete:a3': 2000 }, toDoc(older, { 'athlete:a3': 1000 }))
+    expect(reverse.changed).toBe(false)
+    expect(reverse.needsPush).toBe(true)
+  })
+
+  it('la séance régénérée par un téléphone arrive chez les autres, sans toucher à leur brouillon', () => {
+    const local = defaultState()
+    local.draft.name = 'Mon brouillon'
+    const remote = clone(defaultState())
+    remote.sessions = remote.sessions.slice(0, 2)
+    const res = mergeDoc(local, {}, toDoc(remote, { session: 5000 }))
+    expect(res.state.sessions).toHaveLength(2)
+    expect(res.state.draft.name).toBe('Mon brouillon')
+    expect(res.stamps.session).toBe(5000)
+  })
+
+  it('un téléphone qui rejoint sans avoir rien modifié adopte la séance de l’équipe', () => {
+    const team = defaultState()
+    const newcomer = defaultState() // même contenu, identifiants différents
+    expect(newcomer.sessions.map((x) => x.id)).not.toEqual(team.sessions.map((x) => x.id))
+    const res = mergeDoc(newcomer, {}, toDoc(team, {}))
+    expect(res.changed).toBe(true)
+    expect(res.needsPush).toBe(false)
+    expect(res.state.sessions.map((x) => x.id)).toEqual(team.sessions.map((x) => x.id))
+  })
+
+  it('un avis rempli avant de rejoindre l’équipe est conservé et envoyé', () => {
+    const team = defaultState()
+    const newcomer = defaultState()
+    newcomer.athletes[2].blockers = 'sandbag lourd'
+    const res = mergeDoc(newcomer, { 'athlete:a3': 4000 }, toDoc(team, {}))
+    expect(res.state.athletes[2].blockers).toBe('sandbag lourd')
+    expect(res.needsPush).toBe(true)
+  })
+
+  it('document distant malformé : nettoyé, jamais d’exception', () => {
+    expect(sanitizeDoc(null)).toBeNull()
+    expect(sanitizeDoc({ sections: [] })).toBeNull()
+    const doc = sanitizeDoc({ sections: { session: { t: 9000, d: 'pas une liste' }, 'athlete:a1': { t: 9000, d: { name: 'X'.repeat(200), sex: '?', rm: { snatch: -1 } } }, bidon: { t: 'x', d: 1 } } })!
+    expect(Object.keys(doc.sections)).toEqual(['session', 'athlete:a1'])
+    const base = defaultState()
+    const res = mergeDoc(base, {}, doc)
+    expect(res.state.sessions).toEqual(base.sessions)
+    expect(res.state.athletes[0].id).toBe('a1')
+    expect(res.state.athletes[0].name).toHaveLength(40)
+    expect(res.state.athletes[0].rm).toEqual({})
+  })
+
+  it('codes d’équipe', () => {
+    const code = newTeamCode((n) => Array.from({ length: n }, (_, i) => i * 7))
+    expect(code).toMatch(/^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/)
+    expect(isValidTeamCode(code)).toBe(true)
+    expect(isValidTeamCode(newTeamCode())).toBe(true)
+    expect(normalizeTeamCode('  ABCD-efgh 1234!! ')).toBe('abcd-efgh1234')
+    expect(isValidTeamCode('court')).toBe(false)
+    expect(isValidTeamCode('avec espace 123')).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { ChevronDown, Plus, Send, Trash2 } from 'lucide-react'
+import { ChevronDown, Cloud, Plus, Send, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { shortDate, uid } from '../domain/calc'
 import { COMPETENCY_MOVEMENTS, movement, RM_KEYS, RM_LABEL, UNBROKEN_MOVEMENTS } from '../domain/movements'
@@ -102,7 +102,7 @@ function usePatch(athleteId: string) {
 
 /** L'avis d'un athlète : son niveau par mouvement, en un geste par ligne. */
 function SelfAssessment({ athlete }: { athlete: Athlete }) {
-  const { toast } = useStore()
+  const { toast, teamCode } = useStore()
   const patch = usePatch(athlete.id)
   const rated = COMPETENCY_MOVEMENTS.filter((id) => competencyOf(athlete, id) !== 'unknown').length
 
@@ -163,21 +163,30 @@ function SelfAssessment({ athlete }: { athlete: Athlete }) {
         </Field>
       </div>
 
-      <Button
-        variant="primary"
-        size="lg"
-        className="mt-4 w-full"
-        onClick={async () => {
-          const r = await shareLink(`WOD War Room · avis de ${athlete.name}`, athleteLink(athlete))
-          toast(r === 'copied' ? 'Lien de ton avis copié : envoie-le à l’équipe' : r === 'shared' ? 'Avis partagé' : 'Copie impossible')
-        }}
-      >
-        <Send size={18} aria-hidden />
-        Envoyer mon avis
-      </Button>
-      <p className="mt-2 text-[11px] leading-snug text-dim">
-        Le lien ne contient que la fiche de {athlete.name}. La personne qui prépare la séance l’ouvre, l’avis s’ajoute à son plan, puis elle génère la séance.
-      </p>
+      {teamCode ? (
+        <p className="mt-4 flex items-start gap-2 rounded-xl border border-lime/30 bg-lime/6 p-3 text-[13px] leading-snug">
+          <Cloud size={16} aria-hidden className="mt-0.5 shrink-0 text-lime" />
+          <span>Ton avis est partagé avec l’équipe automatiquement, au fur et à mesure. Rien à envoyer.</span>
+        </p>
+      ) : (
+        <>
+          <Button
+            variant="primary"
+            size="lg"
+            className="mt-4 w-full"
+            onClick={async () => {
+              const r = await shareLink(`WOD War Room · avis de ${athlete.name}`, athleteLink(athlete))
+              toast(r === 'copied' ? 'Lien de ton avis copié : envoie-le à l’équipe' : r === 'shared' ? 'Avis partagé' : 'Copie impossible')
+            }}
+          >
+            <Send size={18} aria-hidden />
+            Envoyer mon avis
+          </Button>
+          <p className="mt-2 text-[11px] leading-snug text-dim">
+            Le lien ne contient que la fiche de {athlete.name}. La personne qui prépare la séance l’ouvre, l’avis s’ajoute à son plan, puis elle génère la séance.
+          </p>
+        </>
+      )}
     </Card>
   )
 }

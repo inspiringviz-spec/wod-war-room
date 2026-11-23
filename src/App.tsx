@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react'
 import { dayName, shortDate } from './domain/calc'
 import { COMPETENCY_MOVEMENTS } from './domain/movements'
 import { decodeAthlete, decodeProposal, decodeState, decodeWod, mergeAthlete } from './domain/share'
+import { isValidTeamCode, normalizeTeamCode } from './domain/sync'
+import { syncAvailable } from './state/remote'
 import { defaultTrainingDay, go, useRoute, useStore } from './state/store'
 import type { Page } from './state/store'
 import { Button, cx, LEVEL_BG, Notice, Sheet } from './ui/kit'
@@ -44,7 +46,7 @@ function Logo() {
 
 function ImportGate() {
   const route = useRoute()
-  const { replace, update, toast, today, state } = useStore()
+  const { replace, update, toast, today, state, teamCode, joinTeam } = useStore()
   const plan = useMemo(() => (route.page === 'import' ? decodeState(route.param) : null), [route.page, route.param])
   const wod = useMemo(() => (route.page === 'wod' ? decodeWod(route.param) : null), [route.page, route.param])
   const avis = useMemo(() => (route.page === 'avis' ? decodeAthlete(route.param) : null), [route.page, route.param])
@@ -91,6 +93,52 @@ function ImportGate() {
             <Button className="w-full" onClick={close}>
               Fermer
             </Button>
+          </div>
+        )}
+      </Sheet>
+    )
+  }
+
+  if (route.page === 'equipe') {
+    const code = normalizeTeamCode(route.param)
+    const valid = syncAvailable && isValidTeamCode(code)
+    return (
+      <Sheet open onClose={close} title="Rejoindre l’équipe">
+        {!valid ? (
+          <div className="space-y-3">
+            <Notice tone="red">{syncAvailable ? 'Ce lien d’invitation est incomplet ou abîmé.' : 'La synchronisation n’est pas activée sur cette version de l’application.'}</Notice>
+            <Button className="w-full" onClick={close}>
+              Fermer
+            </Button>
+          </div>
+        ) : teamCode === code ? (
+          <div className="space-y-3">
+            <Notice>Ce téléphone est déjà synchronisé avec cette équipe.</Notice>
+            <Button className="w-full" onClick={close}>
+              Continuer
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm leading-snug text-mute">
+              Ce téléphone va se synchroniser avec l’équipe : les avis, la séance et la stratégie seront les mêmes pour tout le monde et se mettront à jour
+              tout seuls.
+            </p>
+            <Notice>Ce que l’équipe a déjà enregistré remplace ce qui se trouve sur ce téléphone, sauf ce que vous avez modifié plus récemment.</Notice>
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                className="flex-1"
+                onClick={() => {
+                  joinTeam(code)
+                  toast('Équipe rejointe')
+                  go('team', '', true)
+                }}
+              >
+                Rejoindre l’équipe
+              </Button>
+              <Button onClick={close}>Plus tard</Button>
+            </div>
           </div>
         )}
       </Sheet>
@@ -243,10 +291,11 @@ function ImportGate() {
 
 export default function App() {
   const route = useRoute()
-  const { daysOut, week, toastMessage, storageOk } = useStore()
+  const { daysOut, week, toastMessage, storageOk, teamCode, syncStatus } = useStore()
+  const syncDot = !teamCode ? null : syncStatus === 'ok' ? 'bg-lime' : syncStatus === 'error' ? 'bg-red' : 'bg-amber'
   const [share, setShare] = useState(false)
   const [more, setMore] = useState(false)
-  const page: Page = ['import', 'wod', 'avis', 'seance'].includes(route.page) ? 'dashboard' : route.page
+  const page: Page = ['import', 'wod', 'avis', 'seance', 'equipe'].includes(route.page) ? 'dashboard' : route.page
   const countdown = daysOut > 0 ? `J-${daysOut}` : daysOut === 0 ? 'Jour J' : 'Terminé'
 
   return (
@@ -283,8 +332,8 @@ export default function App() {
           ))}
         </nav>
         <Button onClick={() => setShare(true)}>
-          <Share2 size={16} aria-hidden />
-          Partager le plan
+          {syncDot ? <span className={cx('size-2.5 rounded-full', syncDot)} /> : <Share2 size={16} aria-hidden />}
+          {teamCode ? 'Équipe synchronisée' : 'Partager le plan'}
         </Button>
       </aside>
 
@@ -293,8 +342,14 @@ export default function App() {
         <Logo />
         <div className="flex items-center gap-2">
           <span className="rounded-full border border-lime/30 bg-lime/10 px-2.5 py-1 font-display text-base leading-none font-bold text-lime uppercase">{countdown}</span>
-          <button type="button" onClick={() => setShare(true)} aria-label="Partager le plan" className="grid size-10 place-items-center rounded-full bg-panel2 text-mute hover:text-ink">
+          <button
+            type="button"
+            onClick={() => setShare(true)}
+            aria-label={teamCode ? `Partage et synchronisation (${syncStatus === 'ok' ? 'synchronisé' : 'en attente'})` : 'Partager le plan'}
+            className="relative grid size-10 place-items-center rounded-full bg-panel2 text-mute hover:text-ink"
+          >
             <Share2 size={17} aria-hidden />
+            {syncDot && <span className={cx('absolute top-1.5 right-1.5 size-2.5 rounded-full ring-2 ring-bg', syncDot)} />}
           </button>
         </div>
       </header>

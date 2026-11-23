@@ -72,9 +72,9 @@ Tous les seuils et multiplicateurs se règlent dans l'écran Fatigue Guard. Le c
 
 ## Partage entre athlètes
 
-GitHub Pages est un hébergement statique : il n'y a ni serveur ni synchronisation en temps réel.
+GitHub Pages est un hébergement statique : sans service supplémentaire, il n'y a ni serveur ni synchronisation.
 
-**Mode livré : partage sans configuration**
+**Mode de base : partage par lien, sans configuration**
 
 - Les données restent dans le navigateur de chaque téléphone (`localStorage`).
 - « Envoyer mon avis » produit un lien qui ne contient que la fiche de l'athlète. Le destinataire l'intègre sans toucher aux autres fiches.
@@ -85,11 +85,27 @@ GitHub Pages est un hébergement statique : il n'y a ni serveur ni synchronisati
 - Après une modification, il faut renvoyer le lien : l'application le dit clairement.
 - Un lien d'avis ou de plan contient des informations de profil : quiconque le reçoit peut les lire.
 
-**Mode collaboratif en temps réel : non livré**
+**Mode équipe synchronisée (facultatif, avec Supabase)**
 
-Un espace partagé avec Supabase (authentification, Row Level Security, synchronisation, historique) n'a pas été implémenté : il demande un projet Supabase à créer et ne pouvait pas être testé de bout en bout. Plutôt qu'une synchronisation à moitié fonctionnelle, l'application s'en tient au partage par lien.
+Si un projet Supabase est configuré, « Partager » propose de **créer une équipe**. Le lien d'invitation ne change jamais ; chaque téléphone qui l'ouvre partage ensuite les mêmes avis, la même séance et la même stratégie, mis à jour en quelques secondes.
 
-Pour l'ajouter plus tard : une table `plans (id, team_id, state jsonb, updated_at, updated_by)`, des politiques RLS limitant lecture et écriture aux membres de `team_members`, un abonnement Realtime sur la ligne du plan, et uniquement la clé publique `anon` dans `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`. La clé `service_role` ne doit jamais se trouver dans le code du navigateur.
+- Le plan est découpé en sections (la fiche de chaque athlète, la séance, la stratégie, les réglages). Chaque section porte l'heure de sa dernière modification et la plus récente l'emporte : deux personnes qui remplissent leur avis en même temps ne s'écrasent pas.
+- Le brouillon du builder reste propre à chaque téléphone.
+- Hors ligne, l'application continue de fonctionner ; les modifications partent au retour du réseau.
+- L'application interroge le serveur toutes les 5 secondes quand elle est à l'écran. Ce n'est pas du temps réel à la milliseconde.
+- Pas de compte : le code d'équipe fait office de clé. **Quiconque a le lien d'invitation peut lire et modifier le plan.**
+- Si deux téléphones modifient la même section au même moment, la dernière écriture gagne (d'après l'horloge de chaque téléphone).
+
+Mise en place :
+
+1. Dans Supabase, ouvrir *SQL Editor*, coller [`supabase/schema.sql`](supabase/schema.sql) et l'exécuter. La table n'est pas accessible directement avec la clé publique : tout passe par deux fonctions qui exigent le code d'équipe.
+2. Renseigner l'adresse du projet et la clé **publique** (jamais la clé `service_role`) :
+   - en local, dans un fichier `.env.local` : `VITE_SUPABASE_URL=...` et `VITE_SUPABASE_ANON_KEY=...` ;
+   - pour le site, dans les variables du dépôt GitHub : `gh variable set VITE_SUPABASE_URL --body "..."` et `gh variable set VITE_SUPABASE_ANON_KEY --body "..."`, puis relancer le déploiement.
+
+Sans ces deux valeurs, la synchronisation n'apparaît pas et l'application fonctionne avec les liens.
+
+Limite à connaître : la clé publique permet à n'importe qui de créer une équipe dans le projet (documents plafonnés à 300 ko). Pour un usage plus large, il faudrait ajouter une authentification.
 
 ## Installation
 
@@ -138,8 +154,10 @@ src/
     brief.ts       Brief en texte clair à coller dans Claude
     strategy.ts    Binômes, répartition de la charge, points bloquants
     share.ts       Nettoyage des données entrantes, liens, JSON
-    domain.test.ts 71 tests
-  state/store.tsx  État global, persistance locale, routage par hash
+    sync.ts        Fusion par section pour la synchronisation d'équipe
+    domain.test.ts 81 tests
+  state/store.tsx  État global, persistance locale, routage par hash, boucle de synchronisation
+  state/remote.ts  Appels au projet Supabase (deux fonctions SQL)
   components/      Éditeur de WOD, panneau Fatigue Guard, partage
   pages/           Un fichier par écran
   ui/kit.tsx       Composants de base
@@ -151,11 +169,11 @@ Toute donnée venant d'un lien, d'un fichier ou du stockage local passe par `san
 
 ## Tests
 
-`npm test` couvre notamment : volumes synchro et partagés, zéro tour, valeurs négatives ou non numériques, charges extrêmes, 1RM manquants, profils vides, calibration des modèles (verts du lundi au mercredi), séance en trois parties (verte quel que soit le jour, drill à la place d'un mouvement non acquis, binômes tournants, matériel manquant), avis et propositions par lien, contenu du brief, WODs de compétition (rouges), hausse de 60 % des burpees, squats lourds à 48 h, séance exigeante jeudi ou vendredi, règles contradictoires, alternative plus sûre (toujours verte quand la cause est corrigeable, séance d'origine intacte), générateur selon le matériel, binômes sans données, aller-retour des liens, liens abîmés et données malformées.
+`npm test` couvre notamment : volumes synchro et partagés, zéro tour, valeurs négatives ou non numériques, charges extrêmes, 1RM manquants, profils vides, calibration des modèles (verts du lundi au mercredi), séance en trois parties (verte quel que soit le jour, drill à la place d'un mouvement non acquis, binômes tournants, matériel manquant), avis et propositions par lien, contenu du brief, fusion de synchronisation (modifications simultanées, arrivée d'un nouveau téléphone, document distant malformé), WODs de compétition (rouges), hausse de 60 % des burpees, squats lourds à 48 h, séance exigeante jeudi ou vendredi, règles contradictoires, alternative plus sûre (toujours verte quand la cause est corrigeable, séance d'origine intacte), générateur selon le matériel, binômes sans données, aller-retour des liens, liens abîmés et données malformées.
 
 ## Limites connues
 
-- Pas de synchronisation automatique entre téléphones (voir plus haut).
+- La synchronisation demande un projet Supabase ; sans lui, tout passe par les liens.
 - Le brief pour Claude se copie et se colle à la main : l'application n'appelle aucune IA.
 - Les coûts par mouvement et les seuils sont des choix raisonnés, pas des valeurs validées scientifiquement.
 - Quand la répartition d'un mouvement n'est pas précisée dans les notes, la charge est estimée à parts égales.
